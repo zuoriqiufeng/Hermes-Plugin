@@ -1,0 +1,12 @@
+name: reasoning-bridge
+version: "1.0.0"
+description: >-
+  Streams model reasoning deltas to per-session JSONL files so an external
+  control plane (i2Agent) can display the deep-thinking process.
+  Observer-only; requires plugins.stream_reasoning_deltas: true.
+author: i2Agent
+kind: standalone
+hooks:
+  - on_stream_start
+  - on_stream_delta
+  - on_stream_end

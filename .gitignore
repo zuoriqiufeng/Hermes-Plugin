@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+# 运行时数据（软链接部署下插件会把 JSONL 写进源码目录；实盘内容不入库）
+data/
