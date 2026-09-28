@@ -5,3 +5,8 @@ __pycache__/
 
 # 运行时数据（软链接部署下插件会把 JSONL 写进源码目录；实盘内容不入库）
 data/
+# 例外：hermes-dag 的 data/ 只放随插件分发的只读资产（DAG 模板），运行时状态在 plugin-data/
+!hermes-dag/data/
+
+# ZCode agent 工作区状态
+.zcode/
