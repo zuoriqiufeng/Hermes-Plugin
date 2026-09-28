@@ -1,0 +1,137 @@
+# diag-rule-error — 规则报错四方向诊断（任务触发版，模板 B 收缩）
+#
+# 入口：会话/工具 dag_run(dag="diag-rule-error", params={rule_id, error_code?, symptom?, log_excerpt?})
+# 骨架：四方向卡并行取证 → verdict 扇入裁决 → 命中方向 rootcause 深挖 → report 回调+回复
+# 铁律：spec 只盖思路入口指针（BKN 工具 + skill）；结论只能来自 worker 运行时取证；
+#       inconclusive ≠ clean；任务触发图永远出 report（无 [SILENT] 路径）。
+# 注意：worker 节点必须盖 assignee——dispatcher 对无 assignee 的 ready 卡静默跳过
+#       （kanban_db_dispatch.py 的 skipped_unassigned）；verdict 即时卡刻意不盖
+#       （推进器建后立即完成，无 assignee 保证 dispatcher 不会抢跑）。
+dag: diag-rule-error
+version: 1
+description: 规则报错（如 CDB6157A 等）四方向并行诊断：日志/连接/容量/规则配置
+
+params:
+  rule_id:      {type: str, required: true,  description: "规则 UUID，如 4C0AC40B…"}
+  error_code:   {type: str, required: false, description: "报错码，如 CDB6157A / -4073 / ORA-xxxx"}
+  symptom:      {type: str, required: false, description: "现象描述一句话"}
+  log_excerpt:  {type: str, required: false, description: "用户贴出的日志摘录（有则优先）"}
+
+nodes:
+  # ----------------------------------------------------------- 四方向并行
+  - id: dir-log
+    kind: exec
+    assignee: default
+    skills: [i2stream-log-analyzer]
+    body_template: |
+      ## [方向 1/4] 日志方向
+      [输入] run={{ run.id }}；规则={{ params.rule_id }}；错误码={{ params.error_code }}；现象={{ params.symptom }}
+      [日志摘录] {{ params.log_excerpt }}
+      [目标] 判定报错是否源于日志可见的同步/装载/备份异常，交结构化 verdict
+      [判据] 命中=日志中出现与症状匹配的 ERROR 行 / checksum 不一致 / 位点停滞 / 规则 UUID 关联报错；
+             排除=按思路走完日志链路无异常；拿不到日志=inconclusive
+      [思路入口] 先调 i2stream-bkn 工具 diagnose_error(error_code="{{ params.error_code }}") 拿触发机理与方向排序；
+             再 search_qdrant 按 error_code/组件做 enrichment（历史案例+鲜活参数）
+      [命令] 从 skill `i2stream-log-analyzer` 获取只读命令清单（grep -a track/load/iaback 日志、
+             iadebug track --rule {{ params.rule_id }}、ps//proc 查看进程态）
+      [决策] 输出 schema 与纪律见文末附录；direction_rank 按 evidence 强度 1（最高）起排
+
+  - id: dir-conn
+    kind: exec
+    assignee: default
+    skills: [i2stream-db-diagnostics]
+    body_template: |
+      ## [方向 2/4] 连接方向
+      [输入] run={{ run.id }}；规则={{ params.rule_id }}；错误码={{ params.error_code }}；现象={{ params.symptom }}
+      [目标] 判定报错是否源于源/目端数据库链路（连接/认证/网络）异常
+      [判据] 命中=连接类错误码 / 认证失败 / 端口或监听不通的取证证据；
+             排除=链路检查全通过；证据不足=inconclusive
+      [思路入口] 调 i2stream-bkn 工具 diagnose_db_link(symptom="connection_error", error_code="{{ params.error_code }}")
+             拿 log_navigation 与推荐 skills；按其 analysis_order 逐段看日志
+      [命令] 从 skill `i2stream-db-diagnostics`（骨架 + 对应 {db}.md + references/db-checkpoints.md）获取只读命令
+      [决策] 输出 schema 与纪律见文末附录
+
+  - id: dir-cap
+    kind: exec
+    assignee: default
+    skills: [i2stream-node-inspection, i2stream-full-dump-monitoring]
+    body_template: |
+      ## [方向 3/4] 容量/资源方向
+      [输入] run={{ run.id }}；规则={{ params.rule_id }}；现象={{ params.symptom }}
+      [目标] 判定报错是否源于磁盘水位 / 进程资源 / 全量进度阻塞
+      [判据] 命中=磁盘水位越线 / 进程 RSS 异常暴涨 / 全量未完成阻塞增量的证据；
+             排除=资源与全量状态健康；证据不足=inconclusive
+      [思路入口] 调 i2stream-bkn 工具 resolve_relation(source_entity="symptom:磁盘满", relation_type="diagnosis_path")
+             （或按现象替换）拿 evidence_logs 与 skills；search_qdrant 查历史容量案例
+      [命令] 从 skill `i2stream-node-inspection`（ps/ss/df//proc/coredumpctl 只读清单）与
+             `i2stream-full-dump-monitoring`（全量完成标记 grep）获取
+      [决策] 输出 schema 与纪律见文末附录
+
+  - id: dir-rule
+    kind: exec
+    assignee: default
+    skills: [i2stream-rule-manager]
+    body_template: |
+      ## [方向 4/4] 规则配置方向
+      [输入] run={{ run.id }}；规则={{ params.rule_id }}；错误码={{ params.error_code }}
+      [目标] 判定报错是否源于规则状态机异常 / 配置漂移
+      [判据] 命中=规则状态异常（STOPPED/ABNORMAL 等）/ 配置与预期漂移的取证；
+             排除=规则状态与配置正常；控制台不可达且节点侧也无法确认=inconclusive
+      [思路入口] 调 i2stream-bkn 工具 diagnose_error(error_code="{{ params.error_code }}") 补机理；
+             按需 query_product(aspect="overview") 校准产品语义
+      [命令] 从 skill `i2stream-rule-manager` 仅取只读动作：list_sync_rules / get_sync_rule_info；
+             禁止 create/delete/start/stop/modify 任何写操作
+      [决策] 输出 schema 与纪律见文末附录
+
+  # ----------------------------------------------------------- 扇入裁决
+  - id: verdict
+    kind: verdict
+    parents: [dir-log, dir-conn, dir-cap, dir-rule]
+    judge:
+      instructions: |
+        本图是 i2Stream 规则报错四方向诊断。四个方向 id：dir-log / dir-conn / dir-cap / dir-rule。
+        领域口径：
+        - 方向卡的 evidence 是现场只读取证（日志行/命令输出/Qdrant 命中参数），是唯一事实来源。
+        - direction_rank 小者优先；hits 按 rank 升序排列。
+        - 仅 inconclusive 方向 → overall=inconclusive，reason 说明卡在何处（如"控制台不可达"）。
+
+  # ----------------------------------------------------------- 条件深挖
+  - id: rootcause
+    kind: exec
+    assignee: default
+    parents: [verdict]
+    when: "nodes.verdict.outputs.verdict == 'hit'"
+    foreach: "nodes.verdict.outputs.hits"
+    skills: [multi-evidence-diagnosis]
+    body_template: |
+      ## [根因深挖] 命中方向={{ nodes.verdict.outputs.hits }}
+      [输入] run={{ run.id }}；规则={{ params.rule_id }}；本卡对应命中方向 shard 见标题；
+             verdict 理由：{{ nodes.verdict.outputs.reason }}
+      [目标] 对命中方向取证到底：现象→证据→根因→影响→建议（六维度），根因必须证据闭环
+      [判据] 结论 ≥2 个独立证据源（multi-evidence-diagnosis 五问证伪全过）；凑不齐就如实降级为
+             "高可能根因 + 待验证项"，不得编造闭环
+      [思路入口] 沿命中方向继续用其 BKN 工具与 skill（见 verdict.outputs 中该方向的 evidence 线索）；
+             search_qdrant 深挖同类历史案例
+      [命令] 只读白名单同方向卡纪律
+      [决策] outputs.verdict 固定为 "hit"；evidence 给完整证据链；root_cause/impact/suggestion
+             放入 outputs 对应字段（report 卡会引用）
+
+  # ----------------------------------------------------------- 报告出口
+  - id: report
+    kind: exec
+    assignee: default
+    parents: [verdict, rootcause]
+    skills: [i2stream_report_sender]
+    body_template: |
+      ## [报告] 汇总输出
+      [输入] run={{ run.id }}；规则={{ params.rule_id }}；
+             verdict={{ nodes.verdict.outputs.verdict }}（{{ nodes.verdict.outputs.reason }}）；
+             rootcause 证据：{{ nodes.rootcause.outputs.items }}
+      [目标] 生成六维度结论（现象/证据/根因/影响/建议/置信度）并完成回调
+      [判据] verdict=hit → 报告写实根因与建议；verdict=clean → 如实报告"四方向均未发现异常"；
+             verdict=inconclusive → 报告卡点与需要的补充信息（如控制台可达性、具体日志路径）
+      [思路入口] skill `i2stream_report_sender`：send_report.py --type analysis-result
+             --analysis-id {{ run.id }} --session-id "$HERMES_SESSION_ID" --json-file <payload>
+      [决策] payload 必填 summary/root_cause/impact/suggestion；artifact 落
+             /hdd/demo/public/reports/{{ run.id }}/
+      [输出] kanban_complete(metadata.outputs={verdict, report_sent: true/false, summary_md})

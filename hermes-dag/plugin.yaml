@@ -1,0 +1,51 @@
+name: hermes-dag
+version: "0.1.0"
+description: >-
+  Plugin-level DAG workflow engine on top of Hermes Kanban. Provides YAML DAG
+  specs (dag_define/dag_explain), run lifecycle with idempotency (dag_run),
+  live status views (dag_status), conditional edges via dynamic card creation
+  and subtree pruning, structured verdict judging via ctx.llm, and a
+  cross-process advancer driven by kanban lifecycle hooks. Kanban remains the
+  single source of truth for task state; the plugin owns specs, dataflow and
+  run bookkeeping. First business template: diag-rule-error (task-triggered
+  four-direction diagnosis for i2stream-bkn).
+author: i2Agent
+kind: standalone
+provides_tools:
+  - dag_define
+  - dag_explain
+  - dag_run
+  - dag_status
+provides_hooks:
+  - kanban_task_completed
+  - kanban_task_blocked
+  - on_kanban_dispatch_tick
+config_schema:
+  board:
+    type: str
+    default: i2stream-ops
+    description: Kanban board all DAG cards live on.
+  advancer_enabled:
+    type: bool
+    default: true
+    description: Start the in-process advancer daemon thread.
+  judge_model:
+    type: str
+    description: Optional model override for the verdict judge (requires llm.allow_model_override);
+      reserved, not wired yet.
+  webhook_enabled:
+    type: bool
+    default: true
+    description: Start the cross-machine webhook HTTP entry.
+  webhook_host:
+    type: str
+    default: 0.0.0.0
+    description: Webhook bind address.
+  webhook_port:
+    type: int
+    default: 8620
+    description: Webhook bind port.
+  webhook_token:
+    type: str
+    description: Required shared token checked via X-Dag-Token header; the webhook
+      refuses to start when this is unset.
