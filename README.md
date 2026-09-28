@@ -17,6 +17,13 @@ hermes-plugin/
 │   ├── __init__.py            # register(ctx) + hook 实现
 │   ├── README.md              # 插件级文档（协议/部署/验证）
 │   └── tests/                 # 插件级 pytest
+├── hermes-dag/                # Kanban 之上的 DAG 工作流引擎（编排/条件边/裁决）
+│   ├── plugin.yaml            # 插件清单（provides_tools/hooks + config_schema）
+│   ├── __init__.py            # register(ctx)：工具 + /dag + hooks + advancer + webhook
+│   ├── *.py                   # dsl/evaluator/compiler/advancer/verdict/runstore…
+│   ├── data/templates/        # 业务 DAG 模板（只读资产，随插件分发）
+│   ├── docs/                  # 原理 / M0 验证 / 扩展路线 / 部署验收记录
+│   └── tests/                 # 单测（Fake Kanban）+ 真 CLI 集成冒烟
 └── <future-plugin>/           # 后续插件按同样约定落位
 ```
 
@@ -25,6 +32,7 @@ hermes-plugin/
 | 插件 | 说明 | 状态 |
 |------|------|------|
 | [reasoning-bridge](./reasoning-bridge/) | 把模型 reasoning 增量落成按会话隔离的 JSONL，供 i2Agent tail 后经 SSE 在 i2Console 展示「深度思考」区块。观察者模式，需 `plugins.stream_reasoning_deltas: true` | 已上线验证 |
+| [hermes-dag](./hermes-dag/) | Kanban 之上的插件级 DAG 工作流引擎：YAML DSL、`dag_*` 工具、条件边（动态建卡+子树剪枝）、`ctx.llm` 结构化裁决、webhook 跨机触发；首个业务图 `diag-rule-error`（i2stream-bkn 四方向诊断）。需配 `webhook_token`；worker 卡须带 assignee；gateway 重启后生效 | 已上线验证（2026-09-28 全链路验收） |
 
 ## 部署约定
 
@@ -44,8 +52,8 @@ hermes plugins enable <plugin-name>
 1. **清单 + 入口**：目录下必须有 `plugin.yaml`（声明 `hooks`/`provides_tools`，
    hook 名只能用 hermes `VALID_HOOKS` 中存在的）和 `__init__.py` 的 `register(ctx)`。
 2. **纯 stdlib 优先**：不声明 `requires_env`，不引第三方依赖，避免部署差异。
-3. **失败隔离**：hook 内所有异常 `logger.warning` 后吞掉——插件是观察者，
-   对话主流程不依赖其返回值，任何故障只允许丢插件自身功能。
+3. **失败隔离（fail-open）**：hook/工具内所有异常记录日志后吞掉——插件无论观察者
+   还是工具型，任何故障只允许丢插件自身功能，不得影响对话主流程与已注册的流转。
 4. **自带测试**：`tests/` 下用 pytest 覆盖核心契约（可 importlib 加载模块、
    伪造 ctx/payload，不依赖 hermes 运行时），`python3 -m pytest tests/ -q` 通过后再启用。
 5. **文档随插件走**：每个插件目录内自带 README（协议、配置、验证步骤、故障语义）。
