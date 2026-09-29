@@ -162,6 +162,11 @@ spawn worker → worker 交卡后由**推进器**接续建下一层卡。推进�
 `/dag status` 是纯只读，不触发推进。每层 DAG 延迟预算 ≈ 2×60s（推进对账 + 卡片派发）；
 要提速调 `kanban.dispatch_interval_seconds`。详见 [docs/principles.md §3](docs/principles.md)。
 
+**双轨制门控**：`dag_run` 工具描述内置三条件判据（方向不确定需并行排除 / 无人值守自走 /
+需留痕审计）——预计人工 ≤10 分钟可定位的单点问题走会话直查，不进图。此外
+`known_plugin_toolsets.api_server: [hermes-dag]` 使 **api_server（i2Console REST）会话不暴露
+`dag_*` 工具**（触发走 webhook 或 CLI `/dag`；kanban worker/交互式 CLI 不受影响）。
+
 ## 工具面
 
 | 工具 | 语义 |

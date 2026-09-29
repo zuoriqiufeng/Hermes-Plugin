@@ -81,3 +81,13 @@ idempotency_key=rule-error:4C0AC40B:20260928)` → run `diag-rule-error-20260928
 - 会话客户端在验收中被本机 8 分钟超时掐断（模型建图后又自行展开排查）；run 由 gateway 独立推进至完成，**不受影响**——恰好验证了"图跑完自己走"的哨兵属性。
 - 回调目标（analysis_id）被上游 API 拒绝属环境侧问题（该 run 未在上游注册 analyses 记录），引擎侧行为正确（如实记录 `report_sent=false` + 原因）。
 - 单测 21/21、冒烟 PASS（含 webhook 步骤），部署后据此记录归档。
+
+## 8. 后续门控与效率加固（2026-09-28/29 追记）
+
+- **api_server 门控**（2026-09-29）：日常 i2Console REST 会话不再暴露 `dag_*` 工具——
+  `known_plugin_toolsets.api_server: [hermes-dag]`（config.yaml）。验证：`_get_platform_tools(cfg, "api_server")`
+  解析无 hermes-dag、`cli` 平台保持可见；webhook/advancer/hooks 不依赖工具可见性，不受影响。
+  ⚠ caveat：交互式 `hermes tools` 选择器保存时会重写 `known_plugin_toolsets[api_server]`，
+  届时保持 api_server 下 hermes-dag 不勾选即可。
+- **效率二期**：dag-ops 瘦身 profile + 取证预算 + report 合成节点 + dispatch 15s +
+  rootcause 内联（模板 v2）——实测 49m33s → 15m13s（-69%），详见 [perf-optimization.md](perf-optimization.md)。
