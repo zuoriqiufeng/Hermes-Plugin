@@ -17,6 +17,7 @@ import os
 import sqlite3
 import threading
 import time
+from pathlib import Path
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs(
@@ -67,18 +68,24 @@ CREATE TABLE IF NOT EXISTS specs(
 _TERMINAL_RUN = ("completed", "failed", "aborted")
 
 
+def _shared_hermes_home() -> str:
+    """队列与账本的落点必须是 gateway 与 worker **共享**的基座 home。
+    worker 以 profile 运行时 HERMES_HOME=~/.hermes/profiles/<name>，若按各自 home
+    建库，worker hook 入队的事件 gateway 永远看不到（队列分裂）——上溯到 profiles 之前的基座。"""
+    home = os.environ.get("HERMES_HOME") or os.path.join(str(Path.home()), ".hermes")
+    parts = Path(home).parts
+    if "profiles" in parts:
+        idx = parts.index("profiles")
+        home = str(Path(*parts[:idx])) if idx else home
+    return home
+
+
 def default_db_path() -> str:
-    """plugin-data 目录优先；导入不可用则按官方路径约定手拼。"""
+    """共享库路径：<基座 home>/plugin-data/hermes-dag/runs.db（与官方 plugin-data 布局一致）。"""
     override = os.environ.get("HERMES_DAG_DB")
     if override:
         return override
-    try:
-        from plugins.plugin_storage import plugin_data_dir  # type: ignore
-
-        return os.path.join(str(plugin_data_dir("hermes-dag")), "runs.db")
-    except Exception:
-        home = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
-        return os.path.join(home, "plugin-data", "hermes-dag", "runs.db")
+    return os.path.join(_shared_hermes_home(), "plugin-data", "hermes-dag", "runs.db")
 
 
 class RunStore:

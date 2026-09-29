@@ -21,6 +21,7 @@ SANDBOX = "/tmp/hermes-dag-smoke"
 KANBAN_DB = os.path.join(SANDBOX, "kanban.db")
 RUNS_DB = os.path.join(SANDBOX, "runs.db")
 os.environ["HERMES_KANBAN_DB"] = KANBAN_DB
+os.environ["HERMES_DAG_REPORTS_DIR"] = os.path.join(SANDBOX, "reports")  # 沙箱报告不进实盘目录
 
 PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _spec = importlib.util.spec_from_file_location(
@@ -98,19 +99,18 @@ def main() -> int:
     rc_shard = rc_rows[0]["shard"]
     print(f"rootcause shard 卡: {rc_rows[0]['card_id']} (shard={rc_shard})")
 
-    print("=== 6. rootcause → report → run completed ===")
+    print("=== 6. rootcause → report 合成 → run completed ===")
     client.complete(rc_rows[0]["card_id"], summary="根因闭环",
                     metadata={"outputs": {"verdict": "hit", "root_cause": "checksum 不一致",
                                           "impact": "增量数据差异", "suggestion": "重建比较"}})
     engine.advancer.run_once()
     rep_rows = engine.store.cards_for_node(run_id, "report")
     assert len(rep_rows) == 1, f"report 卡应已建: {rep_rows}"
-    rep_body = client.show(rep_rows[0]["card_id"])["body"]
-    assert "verdict=hit" in rep_body, "report body 应渲染 verdict"
-    print(f"report 卡建卡 ✓，body 渲染 verdict=hit ✓")
-    client.complete(rep_rows[0]["card_id"], summary="报告已回调",
-                    metadata={"outputs": {"verdict": "hit", "report_sent": True}})
-    engine.advancer.run_once()
+    rep_show = client.show(rep_rows[0]["card_id"])
+    assert rep_show["status"] == "done", "synthesis report 卡应由推进器即时完成"
+    rep_out = (client.latest_run(rep_rows[0]["card_id"]).get("metadata") or {}).get("outputs") or {}
+    assert rep_out.get("llm_synthesized") is False and rep_out.get("summary"), rep_out
+    print("report 合成卡即时完成 ✓（冒烟无 llm_fn → 模板兜底；无 callback_address → 回调跳过）")
     run = engine.store.get_run(run_id)
     assert run["status"] == "completed", f"run 应 completed: {run['status']}"
     print("run completed ✓")

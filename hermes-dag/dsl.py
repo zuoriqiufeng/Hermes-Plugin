@@ -180,8 +180,15 @@ def validate_spec(data: dict) -> DagSpec:
         if skills is not None and not (isinstance(skills, list) and all(isinstance(s, str) for s in skills)):
             errors.append(f"node {nid}: skills must be a list of strings")
 
-        if kind == "exec" and not (n.get("body_template") or "").strip():
-            errors.append(f"node {nid}: kind=exec requires body_template")
+        synthesis = n.get("synthesis")
+        if synthesis is not None:
+            if synthesis != "report":
+                errors.append(f"node {nid}: synthesis must be 'report' (only supported kind)")
+            if n.get("foreach"):
+                errors.append(f"node {nid}: synthesis cannot combine with foreach")
+
+        if kind == "exec" and not synthesis and not (n.get("body_template") or "").strip():
+            errors.append(f"node {nid}: kind=exec requires body_template (or synthesis)")
         if kind == "verdict":
             if not (n.get("parents") or []):
                 errors.append(f"node {nid}: kind=verdict requires parents (fan-in)")

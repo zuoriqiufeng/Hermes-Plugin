@@ -31,8 +31,8 @@ TEMPLATES_DIR = Path(__file__).parent / "data" / "templates"
 
 class DagEngine:
     def __init__(self, board: str = "i2stream-ops", db_path: str | None = None,
-                 client: KanbanClient | None = None, judge_fn=None,
-                 advancer_enabled: bool = True):
+                 client: KanbanClient | None = None, judge_fn=None, llm_fn=None,
+                 sender_fn=None, advancer_enabled: bool = True):
         store_path = db_path or default_db_path()
         flow_path = str(Path(store_path).with_name("dataflow.db"))
         self.store = RunStore(store_path)
@@ -41,7 +41,7 @@ class DagEngine:
         self.board = self.client.board
         self.compiler = Compiler(self.client, self.store, self.board)
         self.advancer = Advancer(self.store, self.dataflow, self.client, self.compiler,
-                                 judge_fn=judge_fn)
+                                 judge_fn=judge_fn, llm_fn=llm_fn, sender_fn=sender_fn)
         if advancer_enabled:
             self.advancer.start()
 

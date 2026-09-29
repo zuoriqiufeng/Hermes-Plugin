@@ -12,16 +12,17 @@ version: 1
 description: 规则报错（如 CDB6157A 等）四方向并行诊断：日志/连接/容量/规则配置
 
 params:
-  rule_id:      {type: str, required: true,  description: "规则 UUID，如 4C0AC40B…"}
-  error_code:   {type: str, required: false, description: "报错码，如 CDB6157A / -4073 / ORA-xxxx"}
-  symptom:      {type: str, required: false, description: "现象描述一句话"}
-  log_excerpt:  {type: str, required: false, description: "用户贴出的日志摘录（有则优先）"}
+  rule_id:          {type: str, required: true,  description: "规则 UUID，如 4C0AC40B…"}
+  error_code:       {type: str, required: false, description: "报错码，如 CDB6157A / -4073 / ORA-xxxx"}
+  symptom:          {type: str, required: false, description: "现象描述一句话"}
+  log_excerpt:      {type: str, required: false, description: "用户贴出的日志摘录（有则优先）"}
+  callback_address: {type: str, required: false, description: "report 回调地址 host:port（提供则回调 i2Console）"}
 
 nodes:
   # ----------------------------------------------------------- 四方向并行
   - id: dir-log
     kind: exec
-    assignee: default
+    assignee: dag-ops
     skills: [i2stream-log-analyzer]
     body_template: |
       ## [方向 1/4] 日志方向
@@ -38,7 +39,7 @@ nodes:
 
   - id: dir-conn
     kind: exec
-    assignee: default
+    assignee: dag-ops
     skills: [i2stream-db-diagnostics]
     body_template: |
       ## [方向 2/4] 连接方向
@@ -53,7 +54,7 @@ nodes:
 
   - id: dir-cap
     kind: exec
-    assignee: default
+    assignee: dag-ops
     skills: [i2stream-node-inspection, i2stream-full-dump-monitoring]
     body_template: |
       ## [方向 3/4] 容量/资源方向
@@ -69,7 +70,7 @@ nodes:
 
   - id: dir-rule
     kind: exec
-    assignee: default
+    assignee: dag-ops
     skills: [i2stream-rule-manager]
     body_template: |
       ## [方向 4/4] 规则配置方向
@@ -98,7 +99,7 @@ nodes:
   # ----------------------------------------------------------- 条件深挖
   - id: rootcause
     kind: exec
-    assignee: default
+    assignee: dag-ops
     parents: [verdict]
     when: "nodes.verdict.outputs.verdict == 'hit'"
     foreach: "nodes.verdict.outputs.hits"
@@ -117,21 +118,15 @@ nodes:
              放入 outputs 对应字段（report 卡会引用）
 
   # ----------------------------------------------------------- 报告出口
+  # synthesis: report = 插件侧合成（汇总已有证据 → 单次 LLM → 落盘 + 可选回调），
+  # 不开 worker 会话——报告以已交证据为准，不做二次取证。
   - id: report
     kind: exec
-    assignee: default
+    synthesis: report
     parents: [verdict, rootcause]
-    skills: [i2stream_report_sender]
-    body_template: |
-      ## [报告] 汇总输出
-      [输入] run={{ run.id }}；规则={{ params.rule_id }}；
-             verdict={{ nodes.verdict.outputs.verdict }}（{{ nodes.verdict.outputs.reason }}）；
-             rootcause 证据：{{ nodes.rootcause.outputs.items }}
-      [目标] 生成六维度结论（现象/证据/根因/影响/建议/置信度）并完成回调
-      [判据] verdict=hit → 报告写实根因与建议；verdict=clean → 如实报告"四方向均未发现异常"；
-             verdict=inconclusive → 报告卡点与需要的补充信息（如控制台可达性、具体日志路径）
-      [思路入口] skill `i2stream_report_sender`：send_report.py --type analysis-result
-             --analysis-id {{ run.id }} --session-id "$HERMES_SESSION_ID" --json-file <payload>
-      [决策] payload 必填 summary/root_cause/impact/suggestion；artifact 落
-             /hdd/demo/public/reports/{{ run.id }}/
-      [输出] kanban_complete(metadata.outputs={verdict, report_sent: true/false, summary_md})
+    judge:
+      instructions: |
+        汇总四方向卡与 verdict/rootcause 的 outputs，产出六维度诊断报告（现象/证据/根因/影响/建议/置信度）。
+        verdict=hit → 按 rootcause 结论写实根因；verdict=clean → 如实说明各方向均未发现异常；
+        verdict=inconclusive → 说明卡点（不可达源/缺证清单）并 need_human_input=true。
+        不引入证据之外的事实；root_cause/impact/suggestion 证据不足时写"未定位/待补充"。

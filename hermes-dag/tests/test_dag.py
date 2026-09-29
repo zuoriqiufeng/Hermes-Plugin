@@ -117,15 +117,15 @@ class FakeKanbanClient:
 class Rig:
     """完整引擎装配（Fake 客户端 + 临时库）。"""
 
-    def __init__(self, judge_fn=None):
+    def __init__(self, judge_fn=None, llm_fn=None, sender_fn=None):
         self.tmp = tempfile.mkdtemp(prefix="dag-test-")
         self.store = RunStore(os.path.join(self.tmp, "runs.db"))
         self.dataflow = DataflowStore(os.path.join(self.tmp, "dataflow.db"))
         self.client = FakeKanbanClient()
         self.compiler = Compiler(self.client, self.store, "test-board")
         self.advancer = Advancer(self.store, self.dataflow, self.client,
-                                 self.compiler, judge_fn=judge_fn,
-                                 poll_interval=999)
+                                 self.compiler, judge_fn=judge_fn, llm_fn=llm_fn,
+                                 sender_fn=sender_fn, poll_interval=999)
 
     def run_spec(self, spec: dict, params=None, idem=None):
         self.store.save_spec(spec)
@@ -579,6 +579,86 @@ def test_webhook_bind_conflict_retries_then_gives_up():
         assert out is None
     finally:
         holder.stop()
+
+
+def test_report_synthesis_node():
+    """synthesis: report = 插件侧合成：不开 worker 会话，单次 LLM + 回调 + 落盘。"""
+    os.environ["HERMES_DAG_REPORTS_DIR"] = os.path.join(tempfile.mkdtemp(prefix="dag-rep-"), "reports")
+
+    spec = {"dag": "syn", "params": {"callback_address": {"type": "str"}},
+            "nodes": [
+                {"id": "a", "kind": "exec", "body_template": "A"},
+                {"id": "v", "kind": "verdict", "parents": ["a"],
+                 "judge": {"instructions": "i"}},
+                {"id": "report", "kind": "exec", "synthesis": "report", "parents": ["v", "a"]},
+            ]}
+    sent = []
+
+    def fake_sender(run_id, payload_path, address):
+        sent.append((run_id, address))
+        return {"sent": True, "returncode": 0}
+
+    def fake_llm(instructions, input_text, json_schema, schema_name):
+        assert "六维度" in instructions and "a" in input_text
+        return {"summary": "s", "root_cause": "rc", "impact": "im",
+                "suggestion": "sg", "severity": "low", "need_human_input": False}
+
+    rig = Rig(judge_fn=lambda **kw: {"verdict": "hit", "hits": ["a"], "reason": "r"},
+              llm_fn=fake_llm, sender_fn=fake_sender)
+    run_id = rig.run_spec(spec, params={"callback_address": "1.2.3.4:8080"})
+    rig.advance(run_id)
+    a = [t for t in rig.client.tasks.values() if t["title"].endswith("a")][0]
+    _complete_and_advance(rig, run_id, a["id"], {"verdict": "hit", "evidence": ["e"]})
+    rep_rows = rig.store.cards_for_node(run_id, "report")
+    assert len(rep_rows) == 1
+    assert rig.client.tasks[rep_rows[0]["card_id"]]["status"] == "done"
+    outs = rig.client.runs[rep_rows[0]["card_id"]]["metadata"]["outputs"]
+    assert outs["llm_synthesized"] is True and outs["report_sent"] is True
+    assert outs["root_cause"] == "rc" and sent and sent[0][1] == "1.2.3.4:8080"
+    assert outs["artifacts"] and all(os.path.exists(p) for p in outs["artifacts"])
+    assert rig.store.get_run(run_id)["status"] == "completed"
+
+
+def test_report_synthesis_fallback():
+    """LLM 失败 → 模板兜底仍完成；无 callback_address → 回调跳过（不静默失败）。"""
+    def boom(**kw):
+        raise RuntimeError("llm down")
+
+    spec = {"dag": "synf", "nodes": [
+        {"id": "a", "kind": "exec", "body_template": "A"},
+        {"id": "v", "kind": "verdict", "parents": ["a"], "judge": {"instructions": "i"}},
+        {"id": "report", "kind": "exec", "synthesis": "report", "parents": ["v"]},
+    ]}
+    rig = Rig(judge_fn=lambda **kw: {"verdict": "inconclusive", "hits": [], "reason": "卡点"})
+    os.environ["HERMES_DAG_REPORTS_DIR"] = os.path.join(tempfile.mkdtemp(prefix="dag-rep2-"), "reports")
+    run_id = rig.run_spec(spec, params={})
+    rig.advance(run_id)
+    a = [t for t in rig.client.tasks.values() if t["title"].endswith("a")][0]
+    _complete_and_advance(rig, run_id, a["id"], {"verdict": "inconclusive"})
+    rep_rows = rig.store.cards_for_node(run_id, "report")
+    assert len(rep_rows) == 1 and rig.client.tasks[rep_rows[0]["card_id"]]["status"] == "done"
+    outs = rig.client.runs[rep_rows[0]["card_id"]]["metadata"]["outputs"]
+    assert outs["llm_synthesized"] is False and outs["need_human_input"] is True
+    assert outs["callback"]["skipped"] is True
+    assert rig.store.get_run(run_id)["status"] == "completed"
+
+
+def test_dsl_synthesis_validation():
+    with pytest.raises(dsl.DagSpecError) as ei:
+        dsl.parse_spec("""
+dag: t6
+nodes:
+  - {id: a, kind: exec, body_template: A}
+  - {id: r, kind: exec, synthesis: report, parents: [a], foreach: "nodes.a.outputs.x"}
+""")
+    assert "cannot combine with foreach" in str(ei.value)
+    with pytest.raises(dsl.DagSpecError):
+        dsl.parse_spec("""
+dag: t7
+nodes:
+  - {id: a, kind: exec, body_template: A}
+  - {id: r, kind: exec, synthesis: email, parents: [a]}
+""")
 
 
 def test_real_template_loads():

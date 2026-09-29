@@ -39,6 +39,8 @@ CONTRACT_APPENDIX = """
 [纪律] 只读命令白名单：grep/cat/ps/ss/ls/df/stat/etcdctl get/iadebug 只读子命令，优先 i2Stream 原生工具；
   具体命令与参数以 skills 列出的 skill 为唯一来源，禁止任何写操作；先 BKN 工具（思路）后 search_qdrant（enrichment）。
   verdict=inconclusive 是合法结论（拿不到数据时如实交 inconclusive，不算失败）。
+[预算] 取证 ≤20 次工具调用；预计输出 >200 行的命令先重定向到文件再摘录关键行——
+  禁止把全量 keyspace/全盘 find dump 进对话；证据足够（≥2 独立源）立即交卡，不追求穷尽。
 [完成] 契约字段齐全 = 完成；文字汇报不算完成。"""
 
 

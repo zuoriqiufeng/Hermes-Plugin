@@ -45,13 +45,15 @@ _TERMINAL_NODE = (NODE_DONE, NODE_PRUNED)
 
 class Advancer:
     def __init__(self, store: RunStore, dataflow, client: KanbanClient,
-                 compiler: Compiler, judge_fn=None, poll_interval: float = 2.0,
-                 reconcile_interval: float = 60.0):
+                 compiler: Compiler, judge_fn=None, llm_fn=None, sender_fn=None,
+                 poll_interval: float = 2.0, reconcile_interval: float = 60.0):
         self.store = store
         self.dataflow = dataflow
         self.client = client
         self.compiler = compiler
         self.judge_fn = judge_fn
+        self.llm_fn = llm_fn
+        self.sender_fn = sender_fn
         self.poll_interval = poll_interval
         self.reconcile_interval = reconcile_interval
         self._stop = threading.Event()
@@ -247,6 +249,26 @@ class Advancer:
                           upstream_view: dict) -> str:
         """物化节点（建卡）。返回该节点推进后的本地状态：done / creating。"""
         nid = node.id
+
+        # report 合成节点：插件侧执行（汇总→单次 LLM→回调→落盘），不开 worker 会话
+        if node.get("synthesis") == "report":
+            from . import report as report_mod
+
+            outs = report_mod.compile_report(run_id, node, params, upstream_view,
+                                             llm_fn=self.llm_fn, sender_fn=self.sender_fn)
+            created = self.compiler.create_instant_card(
+                run_id, node, params, upstream_view, outputs=outs,
+                summary=(outs.get("summary") or "report synthesized")[:200])
+            self.dataflow.put_outputs(run_id, nid, outs, summary=outs.get("summary"),
+                                      card_id=created["id"])
+            upstream_view[nid] = {"outputs": outs, "summary": str(outs.get("summary") or ""),
+                                  "status": NODE_DONE}
+            self.store.add_event(run_id, "report_done",
+                                 {"node": nid, "card_id": created["id"],
+                                  "report_sent": outs.get("report_sent"),
+                                  "llm_synthesized": outs.get("llm_synthesized")})
+            return NODE_DONE
+
         if node.kind == "verdict":
             outs = verdict_mod.run_judge(node, upstream_view, judge_fn=self.judge_fn)
             created = self.compiler.create_instant_card(

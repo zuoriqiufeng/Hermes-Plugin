@@ -48,8 +48,18 @@ def register(plugin_api):
         )
         return result.parsed
 
+    def llm_fn(instructions: str, input_text: str, json_schema: dict, schema_name: str) -> dict:
+        """通用单次结构化调用（report 合成等）。"""
+        result = plugin_api.llm.complete_structured(
+            instructions=instructions,
+            input=[{"type": "text", "text": input_text}],
+            json_schema=json_schema,
+            schema_name=schema_name,
+        )
+        return result.parsed
+
     try:
-        engine = DagEngine(board=board, judge_fn=judge_fn,
+        engine = DagEngine(board=board, judge_fn=judge_fn, llm_fn=llm_fn,
                            advancer_enabled=bool(advancer_enabled) and is_gateway)
     except Exception:
         log.exception("hermes-dag: engine init failed (fail-open)")

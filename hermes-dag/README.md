@@ -6,6 +6,7 @@ Hermes 插件级 DAG 工作流引擎：**Kanban = 执行层，插件 = 定义层
 - 原理与架构（完整版）：[docs/principles.md](docs/principles.md)
 - 地基验证记录：[docs/m0-ground-verification.md](docs/m0-ground-verification.md)
 - **部署与验收记录（2026-09-28，全链路 PASS）**：[docs/deployment-acceptance.md](docs/deployment-acceptance.md)
+- **效率优化实录（-55% 时长 / -66% 缓存重读）**：[docs/perf-optimization.md](docs/perf-optimization.md)
 - **覆盖面扩展路线（审计稿，5 张候选图）**：[docs/expansion-roadmap.md](docs/expansion-roadmap.md)
 - 业务蓝图：`/hdd/demo/public/bkn/i2stream-dag-orchestration-design.md`
 - 引擎设计：`/hdd/demo/public/bkn/hermes-dag-workflow-plugin-design.md`
