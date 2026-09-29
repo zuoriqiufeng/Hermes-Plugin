@@ -662,11 +662,12 @@ nodes:
 
 
 def test_real_template_loads():
-    """业务模板本身必须通过校验。"""
+    """业务模板本身必须通过校验（v2：rootcause 内联进方向卡）。"""
     from dag.tools import TEMPLATES_DIR
     text = (TEMPLATES_DIR / "diag-rule-error.yaml").read_text(encoding="utf-8")
     spec = dsl.parse_spec(text)
     assert set(spec.node_ids()) >= {"dir-log", "dir-conn", "dir-cap", "dir-rule",
-                                    "verdict", "rootcause", "report"}
+                                    "verdict", "report"}
+    assert "rootcause" not in spec.node_ids()  # v2：根因闭环内联进方向卡
     depths = spec.depth_map()
-    assert depths["verdict"] == 1 and depths["rootcause"] == 2 and depths["report"] == 3
+    assert depths["verdict"] == 1 and depths["report"] == 2

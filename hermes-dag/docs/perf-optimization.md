@@ -2,8 +2,9 @@
 
 > 日期：2026-09-28/29
 > 对照对象：同一模板 `diag-rule-error`、同参数（rule_id=4C0AC40B / error_code=CDB6157A / 症状=规则报错）、同环境
-> 基线 run：`diag-rule-error-20260928-113857-239b29`（11:38，inconclusive 路径，rootcause 被剪枝）
-> 优化 run：`diag-rule-error-20260928-210441-2f30ea`（21:04，**hit 路径**，rootcause 真实运行 + 合成报告）
+> 基线 run：`diag-rule-error-20260928-113857-239b29`（一期前，11:38，inconclusive 路径，rootcause 被剪枝）
+> 一期优化 run：`diag-rule-error-20260928-210441-2f30ea`（21:04，**hit 路径**，rootcause 独立卡）
+> 二期优化 run：`diag-rule-error-20260929-094912-5d9d92`（09:49，**hit 路径**，rootcause 内联 + reasoning low + 预算 10）
 
 ## 1. 基线诊断（优化前的实测）
 
@@ -29,7 +30,7 @@
 | D | `kanban.dispatch_interval_seconds` 60→15 | 配置 |
 | — | 顺带修复：dag-ops worker 的 hook 入队必须与 gateway 共享队列——`default_db_path()` 从 profile home 上溯到基座 home（否则事件分裂，只能靠 60s 对账） | 引擎 |
 
-## 3. 实测对照
+## 3. 一期实测对照（dag-ops 瘦身 + report 折叠 + 预算 20）
 
 ### 3.1 总量（5 worker 会话口径；优化 run 含 rootcause，比基线多做一段深挖）
 
@@ -74,9 +75,50 @@ sqlite3 -readonly "file:/root/.hermes/plugin-data/hermes-dag/runs.db?mode=ro" \
  "SELECT datetime(ts,'unixepoch','localtime'),kind FROM events WHERE run_id='diag-rule-error-20260928-210441-2f30ea'"
 ```
 
-## 5. 残余与后续
+## 5. 二期优化（2026-09-29）：双轨制 + rootcause 内联 + reasoning low
 
-- 每轮底座仍有 ~60K：hermes-dag 工具集仍随插件透传进 worker prompt（可加 `agent.disabled_toolsets: [hermes-dag]` 微调）；KANBAN_GUIDANCE/SOUL 等稳定块可再压（源码级改动，暂缓）。
-- BKN 技能拆分（log-analyzer 1167 行→骨架式按需加载）属 BKN 仓库工作，收益估计每张日志卡再省 ~10K/轮——列为建议。
-- stale-stream（基线中 181s 事件）为 provider 稳定性问题，插件侧无法根治。
-- 基线 run 为 inconclusive（该环境本就查无此规则），优化 run 挖出真实连接问题——两 run 输入相同、环境状态不同，轮次差异亦受此影响；对照以总量口径为准。
+二期改动（用户反馈"22 分钟仍太长，人工分析几分钟就好"后）：
+
+1. **双轨制**：dag_run 工具描述收紧为三条件判据（方向不确定需并行排除 / 无人值守自走 /
+   需留痕审计，至少满足其一）；"预计人工 ≤10 分钟可定位的单点问题一律会话直查，不进图"。
+2. **rootcause 内联**：删除独立 rootcause 卡（图 7→6 节点）；方向卡契约改为"判 hit 则同会话
+   继续根因闭环（multi-evidence-diagnosis 五问证伪，≥2 独立源），outputs 增
+   root_cause/impact/suggestion"——命中卡自带全部取证上下文，省掉新会话的重建成本。
+3. **轮次经济**：dag-ops profile `agent.reasoning_effort: low`（persona_prompt_file 同时修正为
+   profile 精简版 SOUL；`agent.disabled_toolsets: [hermes-dag]` 把编排工具从 worker 提示剔除）；
+   契约预算 20→10（hit 卡内联 ≤18）、步骤处方化。
+
+### 三次 run 对照（同参数）
+
+| 指标 | 基线 | 一期 | **二期** |
+|---|---|---|---|
+| 端到端时长 | 49m33s | 22m03s | **15m13s**（-69%） |
+| API 调用 | 259 | 143 | **103**（-60%） |
+| 缓存重读 | 25.27M | 8.60M | **6.06M**（-76%） |
+| 未缓存输入 | 668K | 494K | 399K |
+| 输出 | 190K | 124K | 102K |
+| reasoning | 104K | — | 63K（low 生效） |
+| 根因质量 | 未定位 | 真实连接问题 | **真实根因 + 双源互证** |
+
+二期 run 判 hit 且**找到了真实根因**：规则 `CDB6157A-3062-4BFF` 于 09:05:51 因源端批量
+`DROP tangxy01.bmsql_*` 致备端表不存在、DDL 执行失败——load_report 133 条 error 与 load.log
+同刻 WARN 双源互证（一二期均未定位到该层）。内联深挖 + 低推理档没有牺牲质量，反而因
+"命中卡带着完整取证上下文继续挖"挖得更深。
+
+### 二期分卡
+
+| 卡 | calls | cacheR | 时长 | 备注 |
+|---|---|---|---|---|
+| dir-log | 19 | 1.31M | 15m13s | hit + 内联根因闭环（关键路径） |
+| dir-conn | 26 | 1.75M | 11m57s | inconclusive |
+| dir-cap | 28 | 1.68M | 7m33s | miss |
+| dir-rule | 30 | 1.32M | 5m08s | inconclusive（控制台不可达） |
+| verdict + report | — | — | ~17s | judge + 合成（llm_synthesized=true） |
+
+### 二期观察
+
+- 预算遵从仍不完美（10/23/16/30 vs 建议 10/≤18）——文字预算有效但不硬；dir-log 19 次已贴线。
+- 关键路径 = 最慢方向卡（dir-log 15 分钟，含内联深挖）；再压只能靠减少方向数（triage 前置，
+  见扩展路线）或更激进的轮次硬限。
+- 剩余 ~15 分钟与人工"3 分钟"的差距是结构性的（4 路并行纪律取证 vs 单线程凭经验直查）——
+  简单单点问题按双轨制走会话直查（2-5 分钟），DAG 留给多方向疑难与无人值守场景。

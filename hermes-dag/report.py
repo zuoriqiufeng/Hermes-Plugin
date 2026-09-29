@@ -64,13 +64,16 @@ def build_report_input(upstream_view: dict, parent_ids: list) -> str:
 
 
 def _fallback_report(upstream_view: dict, parent_ids: list) -> dict:
-    """无 LLM / LLM 失败时的模板兜底：直接引用 verdict 与 rootcause 原文。"""
+    """无 LLM / LLM 失败时的模板兜底：verdict 原文 + 扫描全部上游 outputs 的根因字段。"""
     v = (upstream_view.get("verdict") or {}).get("outputs") or {}
     verdict = v.get("verdict") or "inconclusive"
-    rc = (upstream_view.get("rootcause") or {}).get("outputs") or {}
-    rc_items = rc.get("items") if isinstance(rc, dict) else None
-    rc_list = rc_items if isinstance(rc_items, list) else [rc]
-    causes = [str(o.get("root_cause")) for o in rc_list if isinstance(o, dict) and o.get("root_cause")]
+    causes = []
+    for nid, entry in (upstream_view or {}).items():
+        outputs = entry.get("outputs") or {}
+        items = outputs.get("items") if isinstance(outputs, dict) else None
+        for out in (items if isinstance(items, list) else [outputs]):
+            if isinstance(out, dict) and out.get("root_cause") and nid != "verdict":
+                causes.append(f"{nid}: {out['root_cause']}")
     reason = str(v.get("reason") or "")
     return {
         "summary": reason[:200] or f"诊断完成：verdict={verdict}",

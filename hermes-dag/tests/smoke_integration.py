@@ -86,24 +86,14 @@ def main() -> int:
         client.complete(card_id, summary=f"{nid} done",
                         metadata={"outputs": outputs[nid]})
     engine.advancer.run_once()
-    print("verdict/foreach 推进后：")
+    print("verdict 裁决 + report 合成后：")
 
     vrows = engine.store.cards_for_node(run_id, "verdict")
     assert len(vrows) == 1 and client.show(vrows[0]["card_id"])["status"] == "done", \
         "verdict 虚拟卡应已建并完成"
-    vout = client.runs_meta(vrows[0]["card_id"]) if hasattr(client, "runs_meta") else None
     print(f"verdict 卡 done ✓（{vrows[0]['card_id']}）")
 
-    rc_rows = engine.store.cards_for_node(run_id, "rootcause")
-    assert len(rc_rows) == 1, f"foreach [dir-log] 应产生 1 张 rootcause 卡: {rc_rows}"
-    rc_shard = rc_rows[0]["shard"]
-    print(f"rootcause shard 卡: {rc_rows[0]['card_id']} (shard={rc_shard})")
-
-    print("=== 6. rootcause → report 合成 → run completed ===")
-    client.complete(rc_rows[0]["card_id"], summary="根因闭环",
-                    metadata={"outputs": {"verdict": "hit", "root_cause": "checksum 不一致",
-                                          "impact": "增量数据差异", "suggestion": "重建比较"}})
-    engine.advancer.run_once()
+    print("=== 6. report 合成 → run completed（v2：rootcause 内联进方向卡） ===")
     rep_rows = engine.store.cards_for_node(run_id, "report")
     assert len(rep_rows) == 1, f"report 卡应已建: {rep_rows}"
     rep_show = client.show(rep_rows[0]["card_id"])
