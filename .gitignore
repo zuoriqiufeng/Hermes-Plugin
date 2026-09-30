@@ -10,3 +10,5 @@ data/
 
 # ZCode agent 工作区状态
 .zcode/
+# ZCode 工具自动生成（内容同步自 .gitignore），不入库
+.zcodeignore
