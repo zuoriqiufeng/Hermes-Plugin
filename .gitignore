@@ -7,6 +7,8 @@ __pycache__/
 data/
 # 例外：hermes-dag 的 data/ 只放随插件分发的只读资产（DAG 模板），运行时状态在 plugin-data/
 !hermes-dag/data/
+# 例外：intent-router 的 data/ 同理（意图表 / 词表快照 / 标注语料）；决策日志在 plugin-data/
+!intent-router/data/
 
 # ZCode agent 工作区状态
 .zcode/

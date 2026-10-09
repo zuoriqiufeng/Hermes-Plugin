@@ -1,0 +1,316 @@
+# intent-router 内置意图表：i2Stream 运维域（与 i2stream-bkn 的 12 工具对齐）
+#
+# 覆盖方式（后者覆盖前者，同 id 覆盖、新 id 追加）：
+#   1. 本文件（随插件分发，只读资产）
+#   2. 配置 taxonomy 指定的文件（plugins.entries.intent-router.settings.taxonomy）
+#   3. <plugin-data>/intent-router/taxonomy.d/*.yaml（现场覆盖，不必改仓库）
+#
+# 约定（重要）：
+#   - 所有 pattern / term / examples 都按**归一化口径**书写：小写、半角、连字符统一为 "-"。
+#     加载时会再归一化一次，写全角或大写也能用，但小写最直观。
+#   - action: act 的意图必须同时满足 safe_auto: true 与 config.auto_allow_tools 白名单，
+#     且 config.auto_enabled 为真，才会真正直连工具；否则自动降级为 hint。
+#   - 直连只允许**只读**工具。这里绑定的两个工具均为查询类（diagnose_error / diagnose_db_link）。
+#   - veto_patterns 的语义是「这个意图不成立」（该候选退出竞争），不是「整条消息不作数」。
+version: 1
+lexicon:
+  - data/lexicon/ops-bkn.yaml
+
+intents:
+  # ── 错误码诊断（工具：diagnose_error，error_code 为必填）─────────────────
+  - id: diag_error_code
+    description: 用户给出错误码（-4073 / ORA-01555 / YAS-02276 等），想知道含义、原因或怎么排查
+    action: act
+    expects_entities: [error_code]
+    requires: [error_code]
+    keywords:
+      - 错误码
+      - 错误号
+      - 报错
+      - 异常码
+      - 返回码
+      - error code
+      - errno
+      # 源词表里「描述某类故障的说法」全部指向具体错误码，作为诊断意图的正向证据
+      - {group: "error:phrase", weight: 1.5}
+    examples:
+      - "-4073 是什么意思"
+      - "ORA-01555 报错怎么排查"
+      - "错误码 -4016 什么原因"
+      - "这个错误码代表什么问题"
+      - "YAS-02276 怎么解决"
+    veto_patterns:
+      - 别诊断
+      - 不用诊断
+    allowed_tools: [diagnose_error, diagnose_db_link, resolve_relation, search_qdrant]
+    tool_binding:
+      tool: diagnose_error
+      args: {error_code: "{entities.error_code}"}
+      safe_auto: true
+      timeout_ms: 1500
+
+  # ── 症状诊断（工具：diagnose_db_link，symptom 用规范 id，库名/错误码可选）──
+  - id: diag_symptom_incremental_stuck
+    description: 增量同步卡住/位点不推进/同步停滞/规则变红这类「不往前走」的故障
+    action: act
+    expects_entities: [error_code, db_type]
+    keywords:
+      - {group: "symptom:incremental_stuck"}
+      - 同步不动
+      - 一直不同步
+      # 源词表只有「卡住不动」这类完整说法，但现场更常说「任务卡住了」——补一个
+      # 单字词条（含它即命中本意图，这是该域里最常见的说法，值得为召回放行）。
+      - 卡住
+    examples:
+      - "增量同步卡住了"
+      - "数据同步不动了"
+      - "位点不推进怎么办"
+      - "同步任务一直卡住"
+      - "规则变红了"
+    veto_patterns: [别诊断, 不用诊断]
+    allowed_tools: [diagnose_db_link, resolve_relation, search_qdrant]
+    tool_binding:
+      tool: diagnose_db_link
+      args: {symptom: incremental_stuck}
+      optional_args: {error_code: "{entities.error_code}", db_type: "{entities.db_type}"}
+      safe_auto: true
+      timeout_ms: 1500
+
+  - id: diag_symptom_data_mismatch
+    description: 两端数据对不上/不一致/校验失败/数据错乱这类一致性问题
+    action: act
+    expects_entities: [error_code, db_type]
+    keywords:
+      - {group: "symptom:data_mismatch"}
+    examples:
+      - "两端数据对不上"
+      - "源端和目标端数据不一致"
+      - "同步完数据错乱了"
+      - "校验发现数据差异"
+    veto_patterns: [别诊断, 不用诊断]
+    allowed_tools: [diagnose_db_link, resolve_relation, search_qdrant]
+    tool_binding:
+      tool: diagnose_db_link
+      args: {symptom: data_mismatch}
+      optional_args: {error_code: "{entities.error_code}", db_type: "{entities.db_type}"}
+      safe_auto: true
+      timeout_ms: 1500
+
+  - id: diag_symptom_connection
+    description: 数据库连不上/连接超时/认证失败/端口不通这类链路连通性问题
+    action: act
+    expects_entities: [db_type, error_code, ip]
+    keywords:
+      - {group: "symptom:connection_error"}
+      - 连不上数据库
+      - 登录失败
+      - 无监听
+      - 目标端连不上
+    examples:
+      - "数据库连不上"
+      - "连接超时了"
+      - "登录失败报错"
+      - "目标端端口不通"
+      - "oracle 连不上库"
+    veto_patterns: [别诊断, 不用诊断]
+    allowed_tools: [diagnose_db_link, diagnose_error, resolve_relation, search_qdrant]
+    tool_binding:
+      tool: diagnose_db_link
+      args: {symptom: connection_error}
+      optional_args: {error_code: "{entities.error_code}", db_type: "{entities.db_type}"}
+      safe_auto: true
+      timeout_ms: 1500
+
+  - id: diag_symptom_performance
+    description: 同步变慢/延迟变大/性能下降/队列堆积这类性能退化问题
+    action: act
+    expects_entities: [db_type]
+    keywords:
+      - {group: "symptom:performance_degradation"}
+      - 延迟
+      - 变慢
+    examples:
+      - "同步变慢了"
+      - "延迟越来越大"
+      - "性能下降明显"
+      - "同步速度慢"
+    veto_patterns: [别诊断, 不用诊断]
+    allowed_tools: [diagnose_db_link, resolve_relation, search_qdrant]
+    tool_binding:
+      tool: diagnose_db_link
+      args: {symptom: performance_degradation}
+      optional_args: {error_code: "{entities.error_code}", db_type: "{entities.db_type}"}
+      safe_auto: true
+      timeout_ms: 1500
+
+  - id: diag_symptom_crash
+    description: 进程崩溃/反复重启/服务起不来/进程挂死这类进程级故障
+    action: act
+    expects_entities: [db_type, error_code]
+    keywords:
+      # 「报错」「出错」「失败」在源词表里也挂在 crash_loop 下，但它们几乎出现在一切异常
+      # 描述中，留着会把任何报错消息都拉向本意图——按 exclude 剔除，只留真正指向崩溃的说法。
+      - {group: "symptom:crash_loop", exclude: [报错, 出错, 失败]}
+      - 进程挂了
+      - 反复重启
+      - 崩溃
+    examples:
+      - "进程反复重启"
+      - "服务崩溃了"
+      - "一直在重启"
+      - "进程起不来"
+    veto_patterns: [别诊断, 不用诊断]
+    allowed_tools: [diagnose_db_link, resolve_relation, search_qdrant]
+    tool_binding:
+      tool: diagnose_db_link
+      args: {symptom: crash_loop}
+      optional_args: {error_code: "{entities.error_code}", db_type: "{entities.db_type}"}
+      safe_auto: true
+      timeout_ms: 1500
+
+  - id: diag_symptom_rule_not_found
+    description: 规则找不到 / TrackIPC 规则缺失导致的不生效
+    action: act
+    keywords:
+      - {group: "symptom:track_ipc_rule_not_found"}
+      - 规则找不到
+      - 规则缺失
+      - 规则不生效
+    examples:
+      - "TrackIPC rule not found"
+      - "规则找不到"
+      - "抽取规则缺失导致不同步"
+    veto_patterns: [别诊断, 不用诊断]
+    allowed_tools: [diagnose_db_link, resolve_relation, search_qdrant]
+    tool_binding:
+      tool: diagnose_db_link
+      args: {symptom: track_ipc_rule_not_found}
+      optional_args: {error_code: "{entities.error_code}", db_type: "{entities.db_type}"}
+      safe_auto: true
+      timeout_ms: 1500
+
+  # ── 知识问答（只提示不直连：这些工具要枚举参数，猜参数比不调更糟）──────
+  - id: ask_knowledge
+    description: 问产品/原理/架构/能力/支持范围这类知识问题，需要查本体或说明文档
+    action: hint
+    # 只收「提问形状」的词：主题词（增量同步、全量同步、一致性…）看着像知识问题，实际
+    # 在故障描述里同样高频——「增量同步失败了」不是知识问题，收进关键词会把它误判成
+    # ask_knowledge。主题相关的召回交给 BM25 范例句去做。
+    keywords:
+      - 原理
+      - 架构
+      - 怎么实现
+      - 是什么
+      - 有什么优势
+      - 支持哪些
+      - 支持什么
+      - 适用场景
+      - 介绍一下
+      - 产品定位
+      - 怎么配置
+      - 有什么区别
+      - 是什么原理
+    examples:
+      - "i2Stream 的工作原理是什么"
+      - "增量同步是怎么实现的"
+      - "支持哪些数据库"
+      - "介绍一下产品优势"
+      - "全量同步和增量同步的区别"
+    allowed_tools: [query_product, explain_architecture, search_qdrant, list_scenarios]
+
+  # ── 寒暄（不动作，仅用于统计与避免误判）──────────────────────────────
+  - id: chitchat
+    description: 打招呼、确认、闲聊等与运维无关的输入
+    action: none
+    keywords:
+      - 你好
+      - 您好
+      - 在吗
+      - 谢谢
+      - 辛苦了
+      - 你是谁
+    examples:
+      - "你好"
+      - "在吗"
+      - "你是谁"
+      - "谢谢"
+    # 反向护栏：出现这些**实体**时寒暄不成立——「你好，帮我看看 -4073」不是寒暄。
+    # 比 veto_patterns 更可靠：实体是结构化抽取结果，不依赖说法是否被词典覆盖。
+    # 刻意不含 time_window：'今天/最近3天' 在闲聊里也常见（「今天天气不错」不该被否决）。
+    veto_entities: [error_code, db_type, rule_id, ip, port]
+    # 反向护栏：只要出现域内词，就不是寒暄
+    veto_patterns:
+      - 错误码
+      - 报错
+      - 错误
+      - 同步
+      - 数据库
+      - 库
+      - 连接
+      - 延迟
+      - 卡住
+      - 规则
+      - 诊断
+      - 排查
+
+# ── 第一层：正则（命中即锁定，追求精度而非召回）──────────────────────────
+rules:
+  # 整句就是一个裸错误码："-4073" / "4073"（允许尾随标点）。
+  # 两点刻意为之：① 负向断言排除 1900-2099 年份形状（裸 "2024" 不是错误码）；
+  # ② 匹配 text 而非 compact——compact 会抹掉点号，把 "1.2.3.4" 变成 "1234" 而误判。
+  - id: bare_error_code
+    intent: diag_error_code
+    pattern: '^(?!(?:19|20)[0-9]{2}$)-?[0-9]{3,5}[.。,，!！?？~～]*$'
+    target: text
+    priority: 100
+
+  # 整句是一个带库族前缀的错误码："ORA-01555" / "ora01555" / "YAS-02276"
+  - id: bare_family_error_code
+    intent: diag_error_code
+    pattern: "^(ora|yas|pg|mysql|mssql|db2)[-_]?\\s?[0-9]{3,6}[a-z]?[.。,，!！?？]*$"
+    target: text
+    priority: 100
+
+  # 错误码 + 短疑问尾巴："4073 是什么意思" / "-4016 怎么解决" / "ORA-01555 什么原因"
+  # （现场最常说的一类问法，两种码形都要覆盖）。尾巴是白名单，所以「100 行是什么意思」
+  # 这类不会被误收（尾巴前面多了别的字）；1900-2099 年份开头的输入也排除。
+  - id: bare_code_question
+    intent: diag_error_code
+    pattern: "^(?!(?:19|20)[0-9]{2}\\s)(?:(?:ora|yas|pg|mysql|mssql|db2)[-_]?\\s?[0-9]{3,6}|-?[0-9]{3,5})\\s*(是什么|是什么意思|什么意思|啥意思|是什么问题|是什么错误|什么原因|代表什么|报什么错|报错|怎么解决|如何处理|咋回事)[?？!！。]*$"
+    target: text
+    priority: 95
+
+  # 明确的诊断动词 + 错误码："诊断 -4073" / "排查 ora-01555" / "看看 4016"
+  - id: diag_verb_with_code
+    intent: diag_error_code
+    pattern: "^(诊断|排查|分析|定位|查|查询|查一下|看看|看一下|怎么解决|如何处理)(一下|下)?\\s*[-a-z]*[0-9]{3,6}[.。,，!！?？]*$"
+    target: text
+    priority: 90
+
+  # 长句里带诊断动词 + **强形状错误码**（带符号或库族前缀）——用于「你好，帮我看看 -4073」
+  # 这类前面带寒暄/铺垫的输入。刻意要求符号或家族前缀：否则「看看 100 行的日志」会被误判。
+  - id: diag_verb_with_strong_code
+    intent: diag_error_code
+    match: search
+    pattern: "(诊断|排查|分析|定位|查|查询|查一下|看看|看一下|怎么解决|如何处理)\\s*(错误码|错误号|异常码|返回码|errno|error code)?\\s*((ora|yas|pg|mysql|mssql|db2)[-_]?[0-9]{3,6}|-[0-9]{3,6})"
+    priority: 85
+
+  # 纯粹的链路不通说法："连不上" / "连不上数据库" / "登录失败"
+  - id: bare_connection_phrase
+    intent: diag_symptom_connection
+    pattern: "^(连不上|连接不上|连不了|连不通|无法连接|连接失败|连接超时|认证失败|登录失败|无监听)(数据库|库|db|实例|了)?$"
+    target: compact
+    priority: 70
+
+  # 寒暄（与护栏互补：这里处理更长的礼貌开句）
+  - id: greeting
+    intent: chitchat
+    pattern: "^(你好|您好|hi|hello|嗨|哈喽|早上好|下午好|晚上好|在吗|在么)(啊|呀|哈|呢)?$"
+    target: compact
+    priority: 60
+
+  - id: self_intro_question
+    intent: chitchat
+    pattern: "^(你是谁|你叫什么|介绍一下你|自我介绍)(呢|啊)?$"
+    target: compact
+    priority: 60

@@ -1,0 +1,101 @@
+# intent-router 回归语料（标注集）
+#
+# 用途：① 单测断言（不许出现「错判」，覆盖率达标）；② `/intent tune` 扫阈值；
+#       ③ 改词表/规则后跑一遍，确认没有把已知行为改坏。
+#
+# 字段：
+#   text     输入原文（按归一化口径无关，加载时统一归一化）
+#   expect   期望意图 id；`none` 表示「不该表态」（本地两层必须闭嘴）
+#   max_tier 可选：期望最多在第几层解决（1=正则 2=算法）；不写表示不限制
+#   note     可选：标注理由（尤其是那些「故意不判」的边界样本）
+#
+# 标注纪律：宁可标 `none` 也不要标一个「大概对」的意图——本插件的底线是
+# 「不许错判」，标注太松会让阈值被调到乱表态。
+version: 1
+
+cases:
+  # ── 第一层：整句就是错误码 / 带动词的错误码 ───────────────────────────
+  - {text: "-4073", expect: diag_error_code, max_tier: 1}
+  - {text: "4073", expect: diag_error_code, max_tier: 1}
+  - {text: "ORA-01555", expect: diag_error_code, max_tier: 1}
+  - {text: "ora01555", expect: diag_error_code, max_tier: 1}
+  - {text: "YAS-02276", expect: diag_error_code, max_tier: 1}
+  - {text: "-4073。", expect: diag_error_code, max_tier: 1, note: 尾随标点不该影响判定}
+  - {text: "诊断 -4073", expect: diag_error_code, max_tier: 1}
+  - {text: "排查一下 ora-01555", expect: diag_error_code, max_tier: 1}
+  - {text: "看看 4016", expect: diag_error_code, max_tier: 1}
+  - {text: "你好，帮我看看 -4073", expect: diag_error_code, max_tier: 1, note: 前置寒暄也要认出错误码}
+  - {text: "4073 是什么意思", expect: diag_error_code, max_tier: 1, note: 现场最常说的问法（句首裸码 + 疑问尾巴）}
+  - {text: "-4016 怎么解决", expect: diag_error_code, max_tier: 1}
+  - {text: "ORA-01555 什么原因", expect: diag_error_code, max_tier: 1, note: 家族码 + 疑问尾巴}
+  - {text: "100 行是什么意思", expect: none, note: 数量词跟随：行号不是错误码，实体也不该抽出来}
+
+  # ── 第二层：错误码 + 上下文（实体 + 关键词 + BM25）────────────────────
+  - {text: "错误码 -4016 什么原因", expect: diag_error_code}
+  - {text: "日志解析异常是什么问题", expect: diag_error_code, note: 源词表 ERROR_ALIASES 的说法}
+  - {text: "ORA-01555 快照过期", expect: diag_error_code}
+  - {text: "这个错误码代表什么问题", expect: diag_error_code}
+
+  # ── 第二层：症状（词表 + 范例句）──────────────────────────────────────
+  - {text: "增量同步卡住了", expect: diag_symptom_incremental_stuck}
+  - {text: "数据同步不动了", expect: diag_symptom_incremental_stuck}
+  - {text: "位点不推进怎么办", expect: diag_symptom_incremental_stuck}
+  - {text: "同步任务一直卡住", expect: diag_symptom_incremental_stuck}
+  - {text: "规则变红了", expect: diag_symptom_incremental_stuck}
+  - {text: "两端数据对不上", expect: diag_symptom_data_mismatch}
+  - {text: "源端和目标端数据不一致", expect: diag_symptom_data_mismatch}
+  - {text: "校验发现数据差异", expect: diag_symptom_data_mismatch}
+  - {text: "数据库连不上", expect: diag_symptom_connection}
+  - {text: "连接超时了", expect: diag_symptom_connection, max_tier: 1}
+  - {text: "oracle 连不上库", expect: diag_symptom_connection}
+  - {text: "端口 1521 不通", expect: diag_symptom_connection}
+  - {text: "同步变慢了", expect: diag_symptom_performance}
+  - {text: "延迟越来越大", expect: diag_symptom_performance}
+  - {text: "同步延迟", expect: diag_symptom_performance}
+  - {text: "进程反复重启", expect: diag_symptom_crash}
+  - {text: "服务崩溃了", expect: diag_symptom_crash}
+  - {text: "服务起不来", expect: diag_symptom_crash}
+  - {text: "TrackIPC rule not found", expect: diag_symptom_rule_not_found}
+  - {text: "增量同步卡住 报错 -4073", expect: diag_symptom_incremental_stuck,
+     note: 症状与错误码同时出现时，症状意图绑定的工具能同时吃下两者}
+
+  # ── 第二层：知识问答 ──────────────────────────────────────────────────
+  - {text: "i2Stream 的工作原理是什么", expect: ask_knowledge}
+  - {text: "增量同步是怎么实现的", expect: ask_knowledge}
+  - {text: "支持哪些数据库", expect: ask_knowledge}
+  - {text: "增量同步怎么配置", expect: ask_knowledge}
+  - {text: "介绍下产品优势", expect: ask_knowledge}
+
+  # ── 寒暄 ──────────────────────────────────────────────────────────────
+  - {text: "你好", expect: chitchat, max_tier: 1}
+  - {text: "在吗", expect: chitchat, max_tier: 1}
+  - {text: "你是谁", expect: chitchat, max_tier: 1}
+  - {text: "谢谢，麻烦了", expect: chitchat}
+
+  # ── 追问护栏：意图继承自上文，本地不该表态 ────────────────────────────
+  - {text: "继续", expect: none, max_tier: 1, note: 追问护栏}
+  - {text: "详细点", expect: none, max_tier: 1}
+  - {text: "然后呢", expect: none, max_tier: 1}
+  - {text: "为什么", expect: none, max_tier: 1}
+  - {text: "好的", expect: none, max_tier: 1}
+
+  # ── 反例：数字但不是错误码 ────────────────────────────────────────────
+  - {text: "2024", expect: none, max_tier: 1, note: 年份形状必须排除}
+  - {text: "2024 是什么意思", expect: none, note: 年份开头的问句不能被当成错误码问句}
+  - {text: "100 行是什么意思", expect: none, note: 尾巴前多了别的字，不该套用裸码问句规则}
+  - {text: "1.2.3.4", expect: none, note: compact 会抹掉点号，裸码规则必须匹配 text}
+  - {text: "id 是 12345", expect: none, note: 无符号 + 无错误码上下文}
+  - {text: "第 100 行日志有异常", expect: none, note: 行号不是错误码}
+  - {text: "这个表有 3 个字段", expect: none}
+
+  # ── 反例：域外语义 / 变更请求（不得当成诊断自动执行）──────────────────
+  - {text: "今天天气不错", expect: none}
+  - {text: "帮我写一个 python 脚本", expect: none}
+  - {text: "把日志级别调成 debug", expect: none}
+  - {text: "这个需求什么时候能上线", expect: none}
+  - {text: "把这段日志发给我", expect: none}
+  - {text: "磁盘满了", expect: none, note: 属资源类，当前词表未覆盖——落到第三层更合适}
+  - {text: "内存不够了", expect: none}
+  - {text: "cpu 100%", expect: none}
+  - {text: "打卡", expect: none}
+  - {text: "6", expect: none}

@@ -1,0 +1,188 @@
+name: intent-router
+version: "0.1.0"
+description: >-
+  Tiered intent recognition for Hermes sessions. Tier 1 regex gives
+  high-precision verdicts for explicitly shaped input, tier 2 algorithms
+  (Aho-Corasick lexicon scan + char-bigram BM25 + score/margin/evidence
+  gating) cover paraphrases, and only the residual reaches an LLM (tier 3,
+  host-owned auxiliary slot so a cheap model can be wired in). On a confident
+  hit the plugin may call one allowlisted read-only tool and inject its result
+  into the current turn, so the main model answers with a single request
+  instead of a tool loop. Default mode is shadow: record and measure only,
+  zero behaviour change.
+author: i2Agent
+kind: standalone
+# 刻意不声明 provides_tools：intent_classify 工具默认**不注册**（config.expose_tool=false，
+# 因为工具 schema 本身要占主提示 token，与本插件省 token 的目标相悖）。声明了却默认不注册，
+# 会让 `hermes plugins validate` 报「declares but did not register」——保持清单与实际一致。
+provides_hooks:
+  - pre_llm_call
+config_schema:
+  enabled:
+    type: bool
+    default: true
+    description: 总开关。false 时仍注册 /intent 命令（便于诊断），但不再干预会话。
+  mode:
+    type: str
+    default: shadow
+    description: 动作档位 shadow（只记录）/ hint（注入意图提示）/ act（高置信直连只读工具并注入结果）。
+  mode_overrides:
+    type: dict
+    default: {}
+    description: "按面覆盖 mode，如 {cli: shadow, api_server: act}；键可用分组名（cli/gateway/api_server）或原始 platform。"
+  surfaces:
+    type: list
+    default: []
+    description: 生效面白名单（分组名或原始 platform）；留空 = 全部面。
+  taxonomy:
+    type: str
+    default: ""
+    description: 额外意图表 YAML 路径；在内置表之上合并（同 id 覆盖，新 id 追加）。
+  min_score:
+    type: float
+    default: 0.62
+    description: 第二层接受阈值；低于此分不表态（升级第三层或放手）。
+  margin:
+    type: float
+    default: 0.15
+    description: top1 与 top2 的最小分差；低于此值视为歧义，不表态。
+  min_evidence:
+    type: int
+    default: 2
+    description: 独立证据条数下限（关键词 / BM25 / 实体 三类各算一条）。
+  weight_keyword:
+    type: float
+    default: 0.6
+    description: 关键词证据在总分中的权重。
+  weight_bm25:
+    type: float
+    default: 0.4
+    description: BM25 相似度在总分中的权重。
+  kw_saturation:
+    type: float
+    default: 2.0
+    description: 关键词权重和达到该值时关键词证据记满分。
+  bm25_evidence_min:
+    type: float
+    default: 0.35
+    description: BM25 归一化分数达到该值才算一条独立证据。
+  veto_penalty:
+    type: float
+    default: 0.5
+    description: 命中否定模式（veto_patterns）后的分数惩罚。
+  tier3_enabled:
+    type: bool
+    default: false
+    description: 是否启用第三层大模型识别（默认关闭；开启后仅吃前两层不确定的残差）。
+  tier3_policy:
+    type: str
+    default: on_ambiguous
+    description: 第三层触发策略 off / on_ambiguous / always。
+  tier3_task:
+    type: str
+    default: intent_router_classify
+    description: 注册的 auxiliary 任务键；在 ~/.hermes/config.yaml 的 auxiliary.<key> 指定廉价模型。
+  tier3_timeout:
+    type: int
+    default: 8
+    description: 第三层调用超时秒数；超时按「无意见」处理（fail-open）。
+  tier3_allow_act:
+    type: bool
+    default: false
+    description: 是否允许第三层的模型判断触发自动工具执行（默认否，只用于 hint）。
+  tier3_cache_size:
+    type: int
+    default: 256
+    description: 第三层结果缓存条数（按归一化文本哈希）。
+  auto_enabled:
+    type: bool
+    default: false
+    description: 是否允许 act 档位真正调用工具（默认关闭，需显式开启）。
+  auto_allow_tools:
+    type: list
+    default: []
+    description: 允许被自动调用的工具白名单（只读工具；留空 = 一个都不允许）。
+  auto_timeout_ms:
+    type: int
+    default: 1500
+    description: 直连工具的执行上限毫秒；超时即放弃（不注入、不等待）。
+  auto_result_chars:
+    type: int
+    default: 4000
+    description: 注入的工具结果字符上限。
+  prune_enabled:
+    type: bool
+    default: false
+    description: 是否按意图裁剪本轮工具面（llm_request 中间件；唯一可能削弱 agent 能力的动作，默认关）。
+  prune_keep_tools:
+    type: list
+    default: []
+    description: 裁剪时始终保留的工具名（建议放核心工具，确保 agent 不被裁瘸）。
+  continuation_guard:
+    type: bool
+    default: true
+    description: 追问护栏：对「继续/详细点/为什么」这类继承上文的输入不做识别与直连。
+  max_input_chars:
+    type: int
+    default: 2000
+    description: 参与匹配的归一化文本字符上限（超出截断；限流兼 ReDoS 缓解）。
+  expose_tool:
+    type: bool
+    default: false
+    description: 是否把 intent_classify 工具暴露给模型（默认关；开着会给主提示增加工具面 token）。
+  telemetry_enabled:
+    type: bool
+    default: true
+    description: 是否写决策日志 JSONL（调参与统计的唯一数据源）。
+  telemetry_preview_chars:
+    type: int
+    default: 120
+    description: 决策日志里原文预览的字符上限。
+  telemetry_max_bytes:
+    type: int
+    default: 8388608
+    description: decisions.jsonl 单文件字节上限，达到后轮转为 .1。
+  emit_events:
+    type: bool
+    default: true
+    description: 是否发布 intent-router:classified 互插件事件（供 hermes-dag 等消费）。
+  log_enabled:
+    type: bool
+    default: true
+    description: 插件自有可读日志总开关（与 decisions.jsonl 是双轨关系，互不影响）。
+  log_dir:
+    type: str
+    default: ""
+    description: "可读日志输出目录；留空 = <基座 home>/plugin-data/intent-router/logs；支持绝对路径。"
+  log_level:
+    type: str
+    default: info
+    description: "可读日志级别 debug/info/warning/error；debug 才记未表态与门控细节。"
+  log_max_bytes:
+    type: int
+    default: 5242880
+    description: 单个日志文件字节上限，达到后新开同日下一个分片（默认 5MB）。
+  log_backups_per_day:
+    type: int
+    default: 3
+    description: 同日分片数上限（.1/.2/.3）；超出后停止写入并只告警一次，防失控。
+  log_retention_days:
+    type: int
+    default: 7
+    description: 日志保留天数；按文件名里的日期清理更早的分片（0 = 不清理）。
+  log_decisions:
+    type: bool
+    default: true
+    description: 是否逐条记决策行；关闭后只留动作、告警与错误。
+  log_preview_chars:
+    type: int
+    default: 120
+    description: "输入预览字符数；0 = 完全不记原文（只留哈希）。"
+  log_redact:
+    type: bool
+    default: true
+    description: 落盘前强制脱敏（复用宿主脱敏实现，取不到则用内置模式）。建议保持开启。
+  log_include_pid:
+    type: bool
+    default: false
+    description: 行首带进程号；多进程并发排查（gateway 与 worker 同写一份）时打开。

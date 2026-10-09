@@ -1,0 +1,199 @@
+# 由 tools/gen_lexicon.py 生成，请勿手工编辑。
+# 源: /hdd/demo/public/i2stream-bkn/plugin/constants.py
+# 源文件 sha256: 2435a4e4c130b675ba08f1e29581a36aa5ff8e7d21aca0cf44f7fe8c31baca8b
+# 重跑: python3 tools/gen_lexicon.py
+# 漂移检查: python3 tools/gen_lexicon.py --check
+version: 1
+generated_from: /hdd/demo/public/i2stream-bkn/plugin/constants.py
+source_sha256: 2435a4e4c130b675ba08f1e29581a36aa5ff8e7d21aca0cf44f7fe8c31baca8b
+note: 快照：插件运行时只读本文件，不跨仓 import
+groups:
+  error:phrase:
+    weight: 1.0
+    terms:
+    - ABNORMAL禁止重启
+    - PL/SQL编译错误
+    - REDO位点异常
+    - TNS
+    - snapshot too old
+    - 对象缺失
+    - 崖山增量异常
+    - 工作节点离线
+    - 快照过期
+    - 数据库未打开
+    - 无监听
+    - 日志解析异常
+    - 用户名/密码错误
+    - 登录失败
+    - 目标端无监听器
+    - 表不存在
+    - 装载进程异常
+    - 运行中操作冲突
+    - 连接标识符无法解析
+    - 通用失败
+  symptom:connection_error:
+    weight: 1.0
+    terms:
+    - 不通
+    - 无法连接
+    - 端口不通
+    - 认证失败
+    - 超时
+    - 连不上
+    - 连不上库
+    - 连不通
+    - 连接失败
+    - 连接异常
+    - 连接超时
+  symptom:crash_loop:
+    weight: 1.0
+    terms:
+    - crash
+    - 出错
+    - 反复重启
+    - 失败
+    - 崩溃循环
+    - 崩溃重启
+    - 报错
+    - 挂了
+    - 起不来
+    - 进程崩溃
+    - 进程挂了
+  symptom:data_mismatch:
+    weight: 1.0
+    terms:
+    - 两端不一致
+    - 数据不一致
+    - 数据不同步
+    - 数据对不上
+    - 数据差异
+    - 数据校验失败
+    - 数据错乱
+    - 校验不一致
+  symptom:dirty_data_rejected:
+    weight: 1.0
+    terms:
+    - 脏数据
+    - 装载拒绝
+  symptom:incremental_stuck:
+    weight: 1.0
+    terms:
+    - 位点不推进
+    - 卡住不动
+    - 同步不动了
+    - 同步停滞
+    - 同步卡住
+    - 同步延迟大
+    - 同步没同步
+    - 增量卡住
+    - 增量延迟
+    - 增量没同步
+    - 规则变红
+  symptom:performance_degradation:
+    weight: 1.0
+    terms:
+    - 变慢了
+    - 同步慢
+    - 延迟大
+    - 延迟高
+    - 性能下降
+    - 性能问题
+    - 追不上
+    - 队列堆积
+  symptom:process_crash:
+    weight: 1.0
+    terms:
+    - 进程退出
+  symptom:resume_from_breakpoint_failed:
+    weight: 1.0
+    terms:
+    - 断点续传
+    - 续传失败
+  symptom:track_ipc_rule_not_found:
+    weight: 1.0
+    terms:
+    - TrackIPC
+    - rule not found
+  dimension:consistency:
+    weight: 1.0
+    terms:
+    - data_diff
+    - 数据差异
+  dimension:resource:
+    weight: 1.0
+    terms:
+    - resource_pressure
+    - 资源压力
+  dimension:state_machine:
+    weight: 1.0
+    terms:
+    - state_conflict
+    - 状态冲突
+  dimension:unknown:
+    weight: 1.0
+    terms:
+    - 未归类
+  db:mention:
+    weight: 1.0
+    terms:
+    - AnalyticDB
+    - ClickHouse
+    - DB2
+    - DWS
+    - Datahub
+    - GaussDB
+    - Kafka
+    - KingBase
+    - MariaDB
+    - MogDB
+    - MySQL
+    - OceanBase
+    - Oracle
+    - PolarDB-X
+    - PolarDB-pg
+    - PostgreSQL
+    - SQL Server
+    - TDSQL
+    - TiDB
+    - VastBase
+    - YashanDB
+    - adb
+    - clickhouse
+    - dameng
+    - datahub
+    - db/2
+    - dm
+    - dm8
+    - dws
+    - gauss
+    - ibm db2
+    - kingbase
+    - mariadb
+    - mogdb
+    - mssql
+    - my
+    - mysqld
+    - ob
+    - ocean base
+    - oceanbase@mysql
+    - ora
+    - oracle database
+    - panwei
+    - panweidb
+    - pg
+    - pgsql
+    - pingcap tidb
+    - polardb-pg
+    - polardb-x
+    - postgres
+    - sqlserver
+    - tdsql for pg
+    - vastbase
+    - yashan
+    - 华为gaussdb
+    - 卡夫卡
+    - 崖山数据库
+    - 甲骨文
+    - 磐维DB
+    - 达梦
+    - 达梦数据库
