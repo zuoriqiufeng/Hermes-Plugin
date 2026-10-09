@@ -31,6 +31,9 @@
 
 ## 配置
 
+> **当前部署档位：shadow only（2026-10-09 决定）**——只记录不改行为，其余开关全部关闭。
+> 理由（Case B、prune 与缓存冲突、hint 净亏）与重启各功能的前置条件见 [docs/decision-shadow-only.md](./docs/decision-shadow-only.md)。
+
 写入 `~/.hermes/config.yaml` 的 `plugins.entries.intent-router.settings`：
 
 ```yaml
@@ -164,6 +167,7 @@ tail -n 3 ~/.hermes/plugin-data/intent-router/decisions.jsonl
 | `telemetry.py` / `corpus.py` | 决策日志（JSONL）与统计；语料加载与阈值扫参 |
 | `tools.py` / `commands.py` | `intent_classify` 工具；`/intent` 命令族 |
 | `tools/gen_lexicon.py` | 开发期：从 i2stream-bkn constants 生成词表快照 |
+| `docs/decision-shadow-only.md` | 决定记录：为何只开 shadow、重启各功能的前置条件 |
 
 运行时状态（决策日志、可读日志、现场覆盖的意图表、误判修正）都在
 `~/.hermes/plugin-data/intent-router/`（可读日志在 `logs/` 子目录，也可用 `log_dir` 指到别处），

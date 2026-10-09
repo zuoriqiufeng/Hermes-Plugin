@@ -127,9 +127,12 @@ def _stats(rest: str, telemetry: Any, settings: Any) -> str:
         "最近 %d 条记录（%d 条决策 / %d 条裁剪）：" % (
             summary["records"], summary["decisions"], summary["prune_events"]),
         "  层分布: %s" % summary["tiers"],
-        "  表态率: %.1f%%   第三层: %d 次（%.1f%%）   触及工具: %d 次（%.1f%%）" % (
+        "  表态率: %.1f%%   第三层: %d 次（%.1f%%）" % (
             summary["classified_rate"] * 100, summary["tier3_used"],
-            summary["tier3_rate"] * 100, summary["acted"], summary["act_rate"] * 100),
+            summary["tier3_rate"] * 100),
+        "  实际触及工具: %d 次（%.1f%%）" % (summary["acted"], summary["act_rate"] * 100),
+        "  本应触及工具（shadow 反事实）: %d 次（%.1f%%）——影子期看这个数决定要不要开 act" % (
+            summary["would_act"], summary["would_act_rate"] * 100),
         "  延迟 ms: p50=%.2f p95=%.2f max=%.2f" % (
             summary["latency_ms"]["p50"], summary["latency_ms"]["p95"], summary["latency_ms"]["max"]),
         "  注入: %d 字符（粗估 %d tokens）" % (

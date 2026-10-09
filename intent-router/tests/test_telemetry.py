@@ -82,6 +82,31 @@ def test_summarize_aggregates_expected_fields():
     assert summary["skipped"] == {"follow_up": 1}
 
 
+def test_summarize_splits_actual_and_counterfactual_acts():
+    """影子期口径：`acted` 只算真的执行过；shadow 的反事实单列 `would_act`。
+
+    否则采数期 stats 会报「实际触及工具 N 次」而一次都没调——被自己的读数骗到。
+    """
+    telemetry = submodule("telemetry")
+    records = [
+        {"kind": "decision", "intent": "a", "action": "act", "mode": "act"},
+        {"kind": "decision", "intent": "b", "action": "act", "mode": "shadow"},
+        {"kind": "decision", "intent": "c", "action": "act", "mode": "shadow"},
+        {"kind": "decision", "intent": "d", "action": "hint", "mode": "hint"},
+        # 缺 mode 的历史记录按「实际执行」计（旧数据兼容）
+        {"kind": "decision", "intent": "e", "action": "act"},
+    ]
+    summary = telemetry.summarize(records)
+    assert summary["acted"] == 2                 # mode=act 的那条 + 无 mode 的历史记录
+    assert summary["would_act"] == 2             # 两条 shadow 反事实
+    assert summary["act_rate"] == 0.4
+    assert summary["would_act_rate"] == 0.4
+    # 全是 shadow 时，实际执行必须为 0
+    shadow_only = telemetry.summarize(
+        [{"kind": "decision", "action": "act", "mode": "shadow"} for _ in range(3)])
+    assert shadow_only["acted"] == 0 and shadow_only["would_act"] == 3
+
+
 def test_summarize_survives_empty_and_garbage():
     telemetry = submodule("telemetry")
     summary = telemetry.summarize([])

@@ -217,8 +217,10 @@ def test_decision_line_format_and_level_filtering(tmp_path):
 
     assert len(lines) == 1                       # info 级别下未表态不落盘
     line = lines[0]
+    # shadow 档位下动作渲染为「未执行 + 反事实」，避免把影子期的记录读成真的注入了提示
     for token in ("INFO", "意图=diag_error_code", "层=regex", "分数=1.00", "证据=3",
-                  "动作=hint", "注入=12", "用时=0.08ms", "会话=mdv2s1u0", "输入=4073 是什么意思"):
+                  "动作=none(本应=hint)", "注入=12", "用时=0.08ms", "会话=mdv2s1u0",
+                  "模式=shadow", "输入=4073 是什么意思"):
         assert token in line, (token, line)
 
     book_debug = logbook.install(_settings(log_level="debug"), tmp_path / "plugin-data2")
@@ -267,6 +269,33 @@ def test_survives_global_logging_disable(tmp_path):
     assert "意图=diag_error_code" in joined          # 决策行必须留下
     assert "工具降级：timeout" in joined             # 事件行必须留下
     assert "模块告警" not in joined                   # 模块日志尊重宿主静默策略
+
+
+def test_shadow_counterfactual_rendering(tmp_path):
+    """shadow 下 `action` 是反事实：必须渲染成「未执行(本应=…)」，非 shadow 才渲染成真动作。
+
+    这条锁的是采数期的可读性——影子期日志里出现裸的 `动作=act`，
+    会被读成「插件真的调了工具」，而实际一次都没调。
+    """
+    logbook = submodule("logbook")
+    shadow = logbook.format_decision_line({
+        "intent": "diag_error_code", "tier": "regex", "action": "act",
+        "tool": "diagnose_error", "tool_ms": 42, "mode": "shadow", "preview": "-4073",
+    })
+    assert "动作=none(本应=act)" in shadow
+    assert "工具=diagnose_error" in shadow          # 反事实用到的工具仍要显示
+    assert "工具用时=42ms" in shadow
+
+    live = logbook.format_decision_line({
+        "intent": "diag_error_code", "tier": "regex", "action": "act",
+        "tool": "diagnose_error", "mode": "act", "preview": "-4073",
+    })
+    assert "动作=act" in live and "本应" not in live
+
+    none_action = logbook.format_decision_line({
+        "intent": "chitchat", "action": "none", "mode": "shadow", "preview": "你好",
+    })
+    assert "动作=none" in none_action and "本应" not in none_action
 
 
 def test_include_pid_prefixes_line(tmp_path):

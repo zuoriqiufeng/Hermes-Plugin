@@ -278,8 +278,16 @@ def format_decision_line(record: Dict[str, Any], *, keyword: str = "决策") -> 
     if not intent and candidates:
         parts.append("候选=" + ",".join("%s=%.2f" % (name, float(score))
                                        for name, score in candidates[:3]))
+    # shadow 档位下 action 记的是**反事实**（假如放开会做什么，见 decision.py）。
+    # 直接渲染成 `动作=hint` 会被读成「注入了一条提示」——而实际什么都没做，
+    # 所以这里显式渲染成 `动作=none(本应=hint)`：既不改 JSONL 字段（那里已声明是反事实），
+    # 也不让人误读影子期的日志。
     action = str(record.get("action") or "none")
-    parts.append("动作=%s" % action)
+    shadow = str(record.get("mode") or "") == "shadow"
+    if shadow and action != "none":
+        parts.append("动作=none(本应=%s)" % action)
+    else:
+        parts.append("动作=%s" % action)
     if record.get("tool"):
         parts.append("工具=%s" % record["tool"])
         if record.get("tool_ms"):

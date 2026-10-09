@@ -166,7 +166,13 @@ def summarize(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     tier3_used = sum(1 for item in decisions if item.get("tier3_used"))
     latencies = [float(item.get("elapsed_ms") or 0.0) for item in decisions]
     injected = sum(int(item.get("injected_chars") or 0) for item in decisions)
-    acted = sum(1 for item in decisions if item.get("action") == "act")
+    # 影子期的关键口径：`action` 在 shadow 下记的是**反事实**（decision.py 的约定），
+    # 所以「实际执行过工具」必须把 shadow 记录排除，否则 stats 会报出「触及工具 N 次」
+    # 而实际上一次都没调——采数期最怕的就是被自己的读数骗到。
+    acted = sum(1 for item in decisions
+                if item.get("action") == "act" and str(item.get("mode") or "") != "shadow")
+    would_act = sum(1 for item in decisions
+                    if item.get("action") == "act" and str(item.get("mode") or "") == "shadow")
     total = len(decisions) or 1
     return {
         "records": len(records),
@@ -183,6 +189,8 @@ def summarize(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         "tier3_rate": round(tier3_used / total, 4),
         "acted": acted,
         "act_rate": round(acted / total, 4),
+        "would_act": would_act,
+        "would_act_rate": round(would_act / total, 4),
         "latency_ms": {
             "p50": round(percentile(latencies, 0.5), 2),
             "p95": round(percentile(latencies, 0.95), 2),
