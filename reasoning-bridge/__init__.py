@@ -36,7 +36,10 @@ logger = logging.getLogger(__name__)
 # 单行 delta 的 text 上限：超限切片成多行 delta（读端按到达顺序拼接，
 # 切分点无需对齐词边界）。按 UTF-8 字节数计，而非字符数。
 MAX_TEXT_BYTES = 64 * 1024
-# 单文件写入上限：达到后停止写入并只 warn 一次（防失控；正常思考流远达不到）。
+# 单文件写入上限：达到后轮转——当前文件改名挪走（.capped-*.jsonl 仍匹配
+# sweep glob，24h 后照常清理），新开同名文件继续写。活跃会话的 mtime 被
+# 持续写入刷新，24h sweep 永远轮不到它，若撞顶即停写会导致整个会话的
+# 思考流永久静默；轮转失败（rename/open 异常）才回退为停写并只 warn 一次。
 MAX_FILE_BYTES = 5 * 1024 * 1024
 # data 目录内超过该龄期的 .jsonl 在 housekeeping 时删除。
 FILE_MAX_AGE_SECONDS = 24 * 3600
@@ -53,7 +56,7 @@ _SAFE_SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _lock = threading.Lock()
 _handles: Dict[str, Any] = {}   # 文件路径 str -> 追加模式句柄
 _sizes: Dict[str, int] = {}     # 文件路径 str -> 已写字节数（含打开时存量）
-_capped: set = set()            # 已达 5MB 上限、已 warn 过的路径
+_capped: set = set()            # 达到上限且轮转失败、已 warn 过（停写）的路径
 _last_housekeeping: float = 0.0
 
 # warn-once 去重（独立锁，避免与写路径的 _lock 嵌套）。
@@ -110,6 +113,45 @@ def _chunk_text(text: str, limit: int = MAX_TEXT_BYTES) -> Iterator[str]:
         yield "".join(buf)
 
 
+def _rotate_locked(key: str, path: Path) -> Optional[Any]:
+    """把已满的会话文件改名挪走并新建同名文件（调用方须持有 ``_lock``）。
+
+    轮转文件命名为 ``{session}.capped-{ns}.jsonl``：仍匹配 sweep 的
+    ``*.jsonl`` glob，24h 龄期照常清理；i2Agent 不会读它（按会话名构造
+    路径）。当前在途 tail 的 fd 指向旧 inode，本轮余下的增量它看不到，
+    下一轮 tail 按名字打开新文件即恢复。
+
+    返回新句柄；rename/open 任一步失败返回 ``None``，且不破坏原缓存
+    状态（原句柄仍可用，由调用方走停写分支）。
+    """
+    rotated = path.with_name("%s.capped-%d.jsonl" % (path.stem, time.time_ns()))
+    try:
+        path.rename(rotated)
+        old = _handles.pop(key, None)
+        _sizes.pop(key, None)
+        _capped.discard(key)
+        if old is not None:
+            try:
+                old.close()
+            except Exception:
+                pass
+        handle = open(path, "a", encoding="utf-8", errors="replace")
+    except OSError:
+        logger.warning(
+            "reasoning-bridge: 轮转 %s 失败，回退为停止写入", path, exc_info=True
+        )
+        return None
+    _handles[key] = handle
+    _sizes[key] = 0
+    logger.info(
+        "reasoning-bridge: %s 达到 %d 字节上限，已轮转为 %s 并继续写入",
+        path,
+        MAX_FILE_BYTES,
+        rotated.name,
+    )
+    return handle
+
+
 def _write_records(session_id: str, records: List[Dict[str, Any]]) -> None:
     """把若干条记录各写成一行（每行一次 write + 批末 flush）。
 
@@ -135,21 +177,37 @@ def _write_records(session_id: str, records: List[Dict[str, Any]]) -> None:
                 handle = open(path, "a", encoding="utf-8", errors="replace")
                 _handles[key] = handle
                 _sizes[key] = size
+                # 重新打开即重新给予轮转机会（上一轮 rename 失败的降级标记作废）。
+                _capped.discard(key)
             for record in records:
                 line = json.dumps(record, ensure_ascii=False) + "\n"
                 encoded = len(line.encode("utf-8", errors="replace"))
-                current = _sizes[key]
-                if current + encoded > MAX_FILE_BYTES:
-                    if key not in _capped:
+                if _sizes[key] + encoded > MAX_FILE_BYTES:
+                    if encoded > MAX_FILE_BYTES:
+                        # 防御：单行本身超限，轮转也救不了（64KB 切片下不可达）。
+                        if key not in _capped:
+                            _capped.add(key)
+                            logger.warning(
+                                "reasoning-bridge: %s 单行 %d 字节超过 %d 上限，停止写入",
+                                path,
+                                encoded,
+                                MAX_FILE_BYTES,
+                            )
+                        return
+                    if key in _capped:  # 轮转失败过的降级路径，不再重试
+                        return
+                    rotated = _rotate_locked(key, path)
+                    if rotated is None:
                         _capped.add(key)
                         logger.warning(
-                            "reasoning-bridge: %s 已达 %d 字节上限，停止写入",
+                            "reasoning-bridge: %s 达到 %d 字节上限且轮转失败，停止写入",
                             path,
                             MAX_FILE_BYTES,
                         )
-                    return
+                        return
+                    handle = rotated
                 handle.write(line)
-                _sizes[key] = current + encoded
+                _sizes[key] += encoded
             handle.flush()
     except Exception as exc:
         _warn_once(

@@ -40,7 +40,9 @@ JSONL 文件，供 i2Agent tail 后经 SSE 转发给 i2Console 展示。
 
 - 每行一次 `write()`（O_APPEND 追加）+ 批末 flush
 - `text` 超 64KB 时切片成多行 delta（读端按到达顺序拼接）
-- 单文件 5MB 上限：达到后停止写入并只 warn 一次
+- 单文件 5MB 上限：达到后轮转——当前文件改名挪走为
+  `{session}.capped-{ns}.jsonl`（仍匹配 24h 清理的 `*.jsonl` glob），新开
+  同名文件继续写；轮转失败才回退为停写并只 warn 一次
 - `session_id` 白名单校验（`[A-Za-z0-9]` 开头，其后 `[A-Za-z0-9._-]*`），
   非法/空 id 的 payload 丢弃并 warn
 - 24h housekeeping：借 `on_stream_start` 事件节流（≥60s 间隔）清理超龄
@@ -83,8 +85,9 @@ python3 -m pytest tests/ -v
 ```
 
 覆盖：hook 注册、行格式、kind 过滤（`text` 不写）、空/非法 session 丢弃、
-JSON 转义往返、64KB 切片、5MB 上限（含 warn 去重）、housekeeping（超龄
-删除 + 60s 节流）、写失败与内部异常的吞没。
+JSON 转义往返、64KB 切片、5MB 触顶轮转（含超限文件首写自愈、轮转失败
+降级停写、轮转文件 24h 清理）、housekeeping（超龄删除 + 60s 节流）、
+写失败与内部异常的吞没。
 
 ## 故障语义
 

@@ -139,27 +139,87 @@ def test_small_text_single_line(tmp_path):
     assert len(read_lines(data_dir / "s1.jsonl")) == 1
 
 
-# ── 5MB 上限 ─────────────────────────────────────────────────────────────
+# ── 5MB 上限与轮转 ───────────────────────────────────────────────────────
 
 
-def test_file_size_cap_stops_writes(tmp_path, caplog):
+def test_file_size_cap_rotates_and_keeps_writing(tmp_path, caplog):
+    caplog.set_level("INFO")
     mod, data_dir = load_plugin(tmp_path)
     data_dir.mkdir(parents=True)
     target = data_dir / "s1.jsonl"
-    # 预填充到距上限不足一行的位置
-    target.write_bytes(b"x" * (mod.MAX_FILE_BYTES - 50))
+    original = b"x" * (mod.MAX_FILE_BYTES - 50)
+    target.write_bytes(original)  # 预填充到距上限不足一行的位置
 
-    payload = "y" * 1000  # 这一行会越过上限
-    mod.on_delta(session_id="s1", turn_id="t1", kind="reasoning", delta=payload)
-    assert target.stat().st_size == mod.MAX_FILE_BYTES - 50  # 未写入任何字节
+    mod.on_delta(session_id="s1", turn_id="t1", kind="reasoning", delta="y" * 1000)
 
-    warnings = [msg for msg in caplog.messages if "上限" in msg]
-    assert len(warnings) == 1  # 只 warn 一次
+    # 旧内容被改名挪走，新文件承接写入且不止写一行
+    rotated = list(data_dir.glob("s1.capped-*.jsonl"))
+    assert len(rotated) == 1
+    assert rotated[0].read_bytes() == original
+    first = read_lines(target)
+    assert first[0]["t"] == "delta" and first[0]["text"] == "y" * 1000
+    assert any("轮转" in msg for msg in caplog.messages)
 
-    mod.on_delta(session_id="s1", turn_id="t1", kind="reasoning", delta=payload)
-    assert target.stat().st_size == mod.MAX_FILE_BYTES - 50  # 持续拒绝
-    warnings = [msg for msg in caplog.messages if "上限" in msg]
-    assert len(warnings) == 1  # 不重复 warn
+    # 轮转后持续可写（撞顶不再导致会话静默）
+    mod.on_delta(session_id="s1", turn_id="t1", kind="reasoning", delta="继续")
+    assert read_lines(target)[-1]["text"] == "继续"
+    assert target.stat().st_size < mod.MAX_FILE_BYTES
+
+
+def test_prefilled_oversized_file_self_heals_on_first_write(tmp_path):
+    """重启后首个 hook 对已满文件（历史 5MB 撞顶现场）轮转即恢复。"""
+    mod, data_dir = load_plugin(tmp_path)
+    data_dir.mkdir(parents=True)
+    target = data_dir / "s1.jsonl"
+    old_bytes = b"x" * (mod.MAX_FILE_BYTES + 100)
+    target.write_bytes(old_bytes)
+
+    mod.on_delta(session_id="s1", turn_id="t1", kind="reasoning", delta="恢复写入")
+
+    assert [ln["text"] for ln in read_lines(target)] == ["恢复写入"]
+    rotated = list(data_dir.glob("s1.capped-*.jsonl"))
+    assert len(rotated) == 1 and rotated[0].read_bytes() == old_bytes
+
+
+def test_rotation_failure_falls_back_to_warn_once_stop(tmp_path, monkeypatch, caplog):
+    mod, data_dir = load_plugin(tmp_path)
+    data_dir.mkdir(parents=True)
+    target = data_dir / "s1.jsonl"
+    target.write_bytes(b"x" * (mod.MAX_FILE_BYTES - 1))
+
+    def boom(self, target_path):
+        raise OSError("rename denied")
+
+    monkeypatch.setattr(Path, "rename", boom)
+
+    # 绝不抛出；warn 一次后停写（降级为撞顶旧行为）
+    mod.on_delta(session_id="s1", turn_id="t1", kind="reasoning", delta="y" * 100)
+    first = [msg for msg in caplog.messages if "停止写入" in msg]
+    assert len(first) >= 1
+    assert target.stat().st_size == mod.MAX_FILE_BYTES - 1  # 未写入任何字节
+    assert not list(data_dir.glob("s1.capped-*.jsonl"))
+
+    mod.on_delta(session_id="s1", turn_id="t1", kind="reasoning", delta="y" * 100)
+    assert [msg for msg in caplog.messages if "停止写入" in msg] == first  # 不重复 warn
+
+
+def test_rotated_files_swept_after_24h(tmp_path):
+    """轮转文件匹配 *.jsonl glob，24h 龄期照常清理；活跃会话文件保留。"""
+    mod, data_dir = load_plugin(tmp_path)
+    data_dir.mkdir(parents=True)
+    stale_rotated = data_dir / "s1.capped-111.jsonl"
+    fresh_rotated = data_dir / "s2.capped-222.jsonl"
+    live = data_dir / "s3.jsonl"
+    for f in (stale_rotated, fresh_rotated, live):
+        f.write_text('{"t":"start"}\n', encoding="utf-8")
+    old = time.time() - mod.FILE_MAX_AGE_SECONDS - 3600
+    os.utime(stale_rotated, (old, old))
+
+    mod.on_start(session_id="s3", turn_id="t1")  # 触发 housekeeping
+
+    assert not stale_rotated.exists()
+    assert fresh_rotated.exists()
+    assert live.exists()
 
 
 # ── housekeeping ─────────────────────────────────────────────────────────
