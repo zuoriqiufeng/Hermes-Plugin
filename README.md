@@ -32,6 +32,11 @@ hermes-plugin/
 │   ├── tools/gen_lexicon.py   # 开发期：从 i2stream-bkn constants 生成词表快照
 │   ├── docs/                  # 原理 / 阈值调参 / 上线路线 / 日志与排查
 │   └── tests/                 # 单测 + 语料回归（importlib 加载，不依赖运行时）
+├── thinking-language/         # 深度思考语言指令（pre_llm_call 注入中文规则）
+│   ├── plugin.yaml            # 插件清单（provides_hooks: pre_llm_call）
+│   ├── __init__.py            # register(ctx)：每轮注入 LANGUAGE_RULE
+│   ├── README.md              # 插件级文档（机制/配置/验收）
+│   └── tests/                 # 插件级 pytest（importlib 加载，不依赖运行时）
 └── <future-plugin>/           # 后续插件按同样约定落位
 ```
 
@@ -42,6 +47,7 @@ hermes-plugin/
 | [reasoning-bridge](./reasoning-bridge/) | 把模型 reasoning 增量落成按会话隔离的 JSONL，供 i2Agent tail 后经 SSE 在 i2Console 展示「深度思考」区块。观察者模式，需 `plugins.stream_reasoning_deltas: true` | 已上线验证 |
 | [hermes-dag](./hermes-dag/) | Kanban 之上的插件级 DAG 工作流引擎：YAML DSL、`dag_*` 工具、条件边（动态建卡+子树剪枝）、`ctx.llm` 结构化裁决、webhook 跨机触发；首个业务图 `diag-rule-error`（i2stream-bkn 四方向诊断）。需配 `webhook_token`；worker 卡须带 assignee；gateway 重启后生效 | 已上线验证（2026-09-28 全链路验收） |
 | [intent-router](./intent-router/) | 分层意图识别：第一层正则（高精度直判）、第二层 Aho-Corasick 词典 + 字符二元组 BM25 + 三重门控（阈值/margin/证据条数）、第三层大模型只吃残差；高置信时直连**只读**工具并把结果注入本轮上下文，主模型一次请求即可作答。默认 `mode: shadow`（只记录、行为零改动），按 `docs/rollout.md` 逐档放开；`/intent` 命令族用于调参与自检；自带可读日志（可配目录、按大小+按日期双轮转、文件名带日期、落盘强制脱敏，见 `docs/logging.md`） | 已启用，**shadow only**（采数期；hint/act/裁剪全关，理由见该插件 `docs/decision-shadow-only.md`） |
+| [thinking-language](./thinking-language/) | 通过官方 `pre_llm_call` 钩子每轮注入一条语言规则，让模型的深度思考（reasoning）用中文输出——针对「思考大多返回英文」（hermes 主系统提示词为英文）。规则仅 API 调用时注入 user message、不落会话历史；异常降级为本轮不注入，绝不打断对话 | 已部署待 gateway 重启生效（2026-10-12；pytest/清单校验/启用登记全过，重启后跑 e2e 中文占比验收） |
 
 ## 部署约定
 

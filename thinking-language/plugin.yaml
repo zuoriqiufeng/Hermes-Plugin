@@ -1,0 +1,12 @@
+name: thinking-language
+version: "1.0.0"
+description: >-
+  Injects a one-line language rule through the pre_llm_call hook so the
+  model reasons (deep thinking) in Chinese instead of English. Directive
+  plugin: the rule is appended to the user message at API-call time only,
+  never persisted to session history. Failure-safe — any error degrades
+  to a no-op for that turn.
+author: i2Agent
+kind: standalone
+provides_hooks:
+  - pre_llm_call
